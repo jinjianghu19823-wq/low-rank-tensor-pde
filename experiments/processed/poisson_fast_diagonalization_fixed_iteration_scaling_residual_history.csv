@@ -1,0 +1,46 @@
+N,method_index,method_id,method_name,iteration,original_true_relative_residual
+150,1,full,Preconditioned full GMRES,0,1
+150,1,full,Preconditioned full GMRES,1,0.000720868256803731
+150,1,full,Preconditioned full GMRES,2,1.01905776960203e-05
+150,1,full,Preconditioned full GMRES,3,1.82304073837031e-07
+150,1,full,Preconditioned full GMRES,4,3.64480464839782e-09
+150,2,fixed,Fixed Tucker-GMRES,0,1
+150,2,fixed,Fixed Tucker-GMRES,1,0.00072086825690214
+150,2,fixed,Fixed Tucker-GMRES,2,1.01915462784249e-05
+150,2,fixed,Fixed Tucker-GMRES,3,2.4176910513354e-07
+150,2,fixed,Fixed Tucker-GMRES,4,1.58476868695602e-07
+150,3,relaxed,Relaxed Tucker-GMRES,0,1
+150,3,relaxed,Relaxed Tucker-GMRES,1,0.00072086825690214
+150,3,relaxed,Relaxed Tucker-GMRES,2,1.01915462308317e-05
+150,3,relaxed,Relaxed Tucker-GMRES,3,2.40275315466714e-07
+150,3,relaxed,Relaxed Tucker-GMRES,4,1.7688785052622e-07
+300,1,full,Preconditioned full GMRES,0,1
+300,1,full,Preconditioned full GMRES,1,0.000256633172801907
+300,1,full,Preconditioned full GMRES,2,2.06128632963227e-06
+300,1,full,Preconditioned full GMRES,3,2.52022310545253e-08
+300,1,full,Preconditioned full GMRES,4,3.16325408301007e-10
+300,2,fixed,Fixed Tucker-GMRES,0,1
+300,2,fixed,Fixed Tucker-GMRES,1,0.000256633172758272
+300,2,fixed,Fixed Tucker-GMRES,2,2.07923767807229e-06
+300,2,fixed,Fixed Tucker-GMRES,3,2.74800148421752e-07
+300,2,fixed,Fixed Tucker-GMRES,4,2.73674526962275e-07
+300,3,relaxed,Relaxed Tucker-GMRES,0,1
+300,3,relaxed,Relaxed Tucker-GMRES,1,0.000256633172758272
+300,3,relaxed,Relaxed Tucker-GMRES,2,2.07923741656748e-06
+300,3,relaxed,Relaxed Tucker-GMRES,3,6.12858416884437e-07
+300,3,relaxed,Relaxed Tucker-GMRES,4,6.36190220123328e-07
+400,1,full,Preconditioned full GMRES,0,1
+400,1,full,Preconditioned full GMRES,1,0.000151360673230502
+400,1,full,Preconditioned full GMRES,2,1.02416685694662e-06
+400,1,full,Preconditioned full GMRES,3,1.50252149244951e-08
+400,1,full,Preconditioned full GMRES,4,1.87085333577026e-10
+400,2,fixed,Fixed Tucker-GMRES,0,1
+400,2,fixed,Fixed Tucker-GMRES,1,0.000151360676172663
+400,2,fixed,Fixed Tucker-GMRES,2,1.170427230694e-06
+400,2,fixed,Fixed Tucker-GMRES,3,5.55021178193846e-07
+400,2,fixed,Fixed Tucker-GMRES,4,5.54833366210546e-07
+400,3,relaxed,Relaxed Tucker-GMRES,0,1
+400,3,relaxed,Relaxed Tucker-GMRES,1,0.000151360676172663
+400,3,relaxed,Relaxed Tucker-GMRES,2,1.17042726671419e-06
+400,3,relaxed,Relaxed Tucker-GMRES,3,7.58178894702721e-07
+400,3,relaxed,Relaxed Tucker-GMRES,4,7.71372456409489e-07

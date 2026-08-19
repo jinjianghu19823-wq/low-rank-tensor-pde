@@ -1,0 +1,21 @@
+.DS_Store
+*.asv
+*.m~
+*.autosave
+*.log
+*.tmp
+
+# Local toolbox state
+tensor_toolbox/
+external/
+slprj/
+codegen/
+
+# Large or regenerated experiment files
+experiments/raw/
+experiments/checkpoints/
+experiments/figures/*.fig
+
+# Editor state
+.vscode/
+.idea/

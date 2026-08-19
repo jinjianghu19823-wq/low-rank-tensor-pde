@@ -1,0 +1,33 @@
+function [U, info] = tucker_gmres_left_preconditioned_relaxed_restarted( ...
+    originalOperatorFunction, preconditionerFunction, F0, U0, ...
+    restartLength, maximumCycles, targetTolerance, ...
+    originalTrueResidualFunction, preconditionedResidualNormFunction, ...
+    displayProgress, maximumBasisStorageEntries, ...
+    maximumMultilinearRank)
+%TUCKER_GMRES_LEFT_PRECONDITIONED_RELAXED_RESTARTED Implement Algorithm 5.8.
+%
+% Each local cycle calls Algorithm 5.7 with basis limit restartLength. The
+% preconditioned residual and beta are recomputed at the cycle start, so the
+% relaxed schedule begins again with eta_1=targetTolerance. The local basis
+% is discarded before the next cycle.
+
+if nargin < 10
+    displayProgress = false;
+end
+
+if nargin < 11
+    maximumBasisStorageEntries = Inf;
+end
+
+if nargin < 12
+    maximumMultilinearRank = [];
+end
+
+[U, info] = run_restarted_left_preconditioned_tucker_gmres( ...
+    originalOperatorFunction, preconditionerFunction, F0, U0, ...
+    restartLength, maximumCycles, targetTolerance, ...
+    targetTolerance, "relaxed", originalTrueResidualFunction, ...
+    preconditionedResidualNormFunction, displayProgress, ...
+    maximumBasisStorageEntries, maximumMultilinearRank);
+
+end

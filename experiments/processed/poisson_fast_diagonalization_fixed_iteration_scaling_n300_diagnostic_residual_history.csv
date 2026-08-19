@@ -1,0 +1,16 @@
+N,method_index,method_id,method_name,iteration,original_true_relative_residual
+300,1,full,Preconditioned full GMRES,0,1
+300,1,full,Preconditioned full GMRES,1,0.000256633172801907
+300,1,full,Preconditioned full GMRES,2,2.06128632963227e-06
+300,1,full,Preconditioned full GMRES,3,2.52022310545253e-08
+300,1,full,Preconditioned full GMRES,4,3.16325408301007e-10
+300,2,fixed,Fixed Tucker-GMRES,0,1
+300,2,fixed,Fixed Tucker-GMRES,1,0.000256633172758272
+300,2,fixed,Fixed Tucker-GMRES,2,2.07923767807229e-06
+300,2,fixed,Fixed Tucker-GMRES,3,2.74800148421752e-07
+300,2,fixed,Fixed Tucker-GMRES,4,2.73674526962275e-07
+300,3,relaxed,Relaxed Tucker-GMRES,0,1
+300,3,relaxed,Relaxed Tucker-GMRES,1,0.000256633172758272
+300,3,relaxed,Relaxed Tucker-GMRES,2,2.07923741656748e-06
+300,3,relaxed,Relaxed Tucker-GMRES,3,6.12858416884437e-07
+300,3,relaxed,Relaxed Tucker-GMRES,4,6.36190220123328e-07
