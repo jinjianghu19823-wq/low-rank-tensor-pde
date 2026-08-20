@@ -1,6 +1,6 @@
 cff-version: 1.2.0
-message: "If you use this software, please cite it using this metadata."
-title: "Tucker sGMRES"
+message: "If you use this repository or its code, please cite the accompanying dissertation."
+title: "Low-Rank Tensor Decomposition for the Solution of Partial Differential Equations"
 type: software
 authors:
   - family-names: "Hu"
@@ -9,9 +9,10 @@ authors:
 license: MIT
 version: 1.0.0
 date-released: 2026-08-19
-repository-code: "https://github.com/jinjianghu19823-wq/tucker-sgmres"
+repository-code: "https://github.com/jinjianghu19823-wq/low-rank-tensor-pde"
 abstract: >-
-  MATLAB implementations of Tucker GMRES and sketched Tucker GMRES.
+  Core MATLAB implementations accompanying an MSc dissertation on Tucker
+  GMRES and sketched Tucker GMRES for tensor-structured PDE problems.
 keywords:
   - Tucker decomposition
   - GMRES
