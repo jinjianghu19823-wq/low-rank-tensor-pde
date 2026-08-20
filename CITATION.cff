@@ -11,12 +11,10 @@ version: 1.0.0
 date-released: 2026-08-19
 repository-code: "https://github.com/jinjianghu19823-wq/tucker-sgmres"
 abstract: >-
-  MATLAB implementations and reproducibility files for Tucker GMRES and
-  sketched Tucker GMRES methods applied to tensor structured Poisson problems.
+  MATLAB implementations of Tucker GMRES and sketched Tucker GMRES.
 keywords:
   - Tucker decomposition
   - GMRES
   - sketched GMRES
   - RHOSVD
   - tensor Krylov methods
-  - Poisson equation
