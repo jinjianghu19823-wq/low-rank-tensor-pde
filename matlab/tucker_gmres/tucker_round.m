@@ -1,120 +1,88 @@
 function [Z, info] = tucker_round( ...
-    X, compressionTolerance, maximumMultilinearRank)
+    X, eta, max_rank)
 %TUCKER_ROUND Recompress one Tucker tensor without forming its full array.
-%
-% The factor matrices of X are first orthogonalised by thin QR
-% factorisations. Their R factors are absorbed into the core. STHOSVD is
-% then applied only to this small orthogonalised core.
-%
-% The optional maximum multilinear rank is a hard cap. If it is smaller
-% than the rank needed by compressionTolerance, info.rank_cap_active is
-% true and the requested tolerance is not guaranteed.
-%
-% Thesis notation (Section 5.5):
-%   X, Z                       <->  \mathcal X,
-%                                   \mathcal T_{\eta,\boldsymbol R}(\mathcal X)
-%   compressionTolerance       <->  \eta
-%   maximumMultilinearRank     <->  \boldsymbol R=(R_1,...,R_d)
-%   X.core                     <->  \mathcal G
-%   X.u{mode}                  <->  U^(n)
-%   Q, R                       <->  Q^(n), R^(n), with U^(n)=Q^(n)R^(n)
-%   orthogonalCore             <->  \mathcal G_Q=\mathcal C^(0)
-%   compressedCoreTensor.u{n}  <->  P^(n)
-%   finalFactors{n}            <->  U_Z^(n)=Q^(n)P^(n)
 
-callTimer = tic;
-
-
-%% 1. Check the inputs
+call_timer = tic;
 
 if ~isa(X, 'ttensor')
     error('X must be a Tensor Toolbox ttensor object.');
 end
 
-if ~isscalar(compressionTolerance) || compressionTolerance <= 0 || compressionTolerance >= 1
-    error('compressionTolerance must be one number between 0 and 1.');
+if ~isscalar(eta) || eta <= 0 || eta >= 1
+    error('eta must be one number between 0 and 1.');
 end
 
 if nargin < 3
-    maximumMultilinearRank = [];
+    max_rank = [];
 end
 
-numberOfModes = ndims(X);
-maximumRanks = normalise_tucker_rank_cap(maximumMultilinearRank, size(X));
+d = ndims(X);
+max_ranks = normalise_tucker_rank_cap(max_rank, size(X));
 
+factors = cell(d, 1);
+core = X.core;
+factor_qr_time = 0;
+core_transform_time = 0;
 
-%% 2. Orthogonalise the factor matrices
+for mode = 1:d
 
-orthogonalFactors = cell(numberOfModes, 1);
-orthogonalCore = X.core;
-factorQrTime = 0;
-coreTransformTime = 0;
-
-for mode = 1:numberOfModes
-
-    componentTimer = tic;
+    component_timer = tic;
     [Q, R] = qr(X.u{mode}, 0);
-    factorQrTime = factorQrTime + toc(componentTimer);
+    factor_qr_time = factor_qr_time + toc(component_timer);
 
-    orthogonalFactors{mode} = Q;
+    factors{mode} = Q;
 
-    componentTimer = tic;
-    orthogonalCore = ttm(orthogonalCore, R, mode);
-    coreTransformTime = coreTransformTime + toc(componentTimer);
+    component_timer = tic;
+    core = ttm(core, R, mode);
+    core_transform_time = core_transform_time + toc(component_timer);
 
 end
 
-
-%% 3. Handle an exact zero tensor
-
-if norm(orthogonalCore) == 0
+if norm(core) == 0
     Z = 0 * X;
 
-    info.requested_tolerance = compressionTolerance;
-    info.maximum_ranks = maximumRanks;
+    info.requested_tolerance = eta;
+    info.maximum_ranks = max_ranks;
     info.tolerance_ranks = size(X.core);
     info.retained_ranks = size(X.core);
     info.relative_error_estimate = 0;
-    info.rank_cap_active_by_mode = false(1, numberOfModes);
+    info.rank_cap_active_by_mode = false(1, d);
     info.rank_cap_active = false;
     info.zero_result = true;
-    kernelTiming = empty_tucker_kernel_timing();
-    kernelTiming.factor_qr_time_sec = factorQrTime;
-    kernelTiming.core_transform_time_sec = coreTransformTime;
-    info.kernel_timing = kernelTiming;
-    info.call_time_sec = toc(callTimer);
+    kernel_timing = empty_tucker_kernel_timing();
+    kernel_timing.factor_qr_time_sec = factor_qr_time;
+    kernel_timing.core_transform_time_sec = core_transform_time;
+    info.kernel_timing = kernel_timing;
+    info.call_time_sec = toc(call_timer);
     return
 end
 
+[compressed_core_tensor, core_info] = sthosvd_round_tensor(core, eta, max_ranks, 1:d);
 
-%% 4. Compress the orthogonalised core
+final_factors = cell(d, 1);
+factor_reconstruction_time = 0;
 
-[compressedCoreTensor, coreInfo] = sthosvd_round_tensor(orthogonalCore, compressionTolerance, maximumRanks, 1:numberOfModes);
-
-finalFactors = cell(numberOfModes, 1);
-factorReconstructionTime = 0;
-
-for mode = 1:numberOfModes
-    componentTimer = tic;
-    finalFactors{mode} = orthogonalFactors{mode} * compressedCoreTensor.u{mode};
-    factorReconstructionTime = ...
-        factorReconstructionTime + toc(componentTimer);
+for mode = 1:d
+    component_timer = tic;
+    final_factors{mode} = factors{mode} * compressed_core_tensor.u{mode};
+    factor_reconstruction_time = ...
+        factor_reconstruction_time + toc(component_timer);
 end
 
-Z = ttensor(compressedCoreTensor.core, finalFactors);
+Z = ttensor(compressed_core_tensor.core, final_factors);
 
-info = coreInfo;
+info = core_info;
 info.zero_result = false;
 
-kernelTiming = coreInfo.kernel_timing;
-kernelTiming.factor_qr_time_sec = ...
-    kernelTiming.factor_qr_time_sec + factorQrTime;
-kernelTiming.core_transform_time_sec = ...
-    kernelTiming.core_transform_time_sec + coreTransformTime;
-kernelTiming.factor_reconstruction_time_sec = ...
-    kernelTiming.factor_reconstruction_time_sec + factorReconstructionTime;
+kernel_timing = core_info.kernel_timing;
+kernel_timing.factor_qr_time_sec = ...
+    kernel_timing.factor_qr_time_sec + factor_qr_time;
+kernel_timing.core_transform_time_sec = ...
+    kernel_timing.core_transform_time_sec + core_transform_time;
+kernel_timing.factor_reconstruction_time_sec = ...
+    kernel_timing.factor_reconstruction_time_sec + factor_reconstruction_time;
 
-info.kernel_timing = kernelTiming;
-info.call_time_sec = toc(callTimer);
+info.kernel_timing = kernel_timing;
+info.call_time_sec = toc(call_timer);
 
 end

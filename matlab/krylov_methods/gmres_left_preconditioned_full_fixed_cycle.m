@@ -1,38 +1,18 @@
 function [x, info] = gmres_left_preconditioned_full_fixed_cycle( ...
-    operatorFunction, preconditionerFunction, b, x0, ...
-    cycleLength, targetOriginalTolerance, displayProgress)
+    A, P, b, x0, ...
+    m, tol, verbose)
 %GMRES_LEFT_PRECONDITIONED_FULL_FIXED_CYCLE Delayed-assembly GMRES cycle.
-%
-% This timing control builds a fixed left-preconditioned Arnoldi cycle,
-% solves the small least-squares problem at every step, and forms the full
-% solution only once after the cycle. Independent original and
-% preconditioned residuals are evaluated after the solver timer stops. This
-% matches the cycle-end assembly used by the Tucker-GMRES implementation.
-%
-% Thesis/experiment notation (Section 6.2 full baseline):
-%   operatorFunction, preconditionerFunction  <->  A_0, M_r
-%   b, x0, x                                 <->  b_0, x_0, x_j
-%   cycleLength                              <->  four-step basis limit
-%   beta                                     <->  ||r_0^P||_2
-%   V(:,j), w                                <->  v_j, M_r A_0 v_j
-%   H(1:j+1,1:j), y                          <->  \bar H_j, y_j
-%   smallResidual                            <->  beta e_1-\bar H_j y_j
-% The word cycle means one finite Arnoldi run here; this routine does not
-% implement a restart loop.
-
-
-%% 1. Check the inputs and form the starting residual
 
 if nargin < 7
-    displayProgress = false;
+    verbose = false;
 end
 
-if cycleLength < 1 || cycleLength ~= round(cycleLength)
-    error('cycleLength must be a positive integer.');
+if m < 1 || m ~= round(m)
+    error('m must be a positive integer.');
 end
 
-if targetOriginalTolerance <= 0
-    error('targetOriginalTolerance must be positive.');
+if tol <= 0
+    error('tol must be positive.');
 end
 
 b = b(:);
@@ -42,53 +22,48 @@ if length(b) ~= length(x0)
     error('b and x0 must have the same number of entries.');
 end
 
-normB = norm(b);
+nrmb = norm(b);
 
-if normB == 0
+if nrmb == 0
     error('The right-hand side b must be nonzero.');
 end
 
-wallTimer = tic;
-solverTimer = tic;
+wall_timer = tic;
+solver_timer = tic;
 
-preconditionedRightHandSide = preconditionerFunction(b);
-normPreconditionedRightHandSide = ...
-    norm(preconditionedRightHandSide);
+Pb = P(b);
+norm_pb = norm(Pb);
 
-if normPreconditionedRightHandSide == 0
+if norm_pb == 0
     error('The preconditioned right-hand side must be nonzero.');
 end
 
-initialOriginalResidualVector = b - operatorFunction(x0);
-initialPreconditionedResidualVector = ...
-    preconditionerFunction(initialOriginalResidualVector);
-beta = norm(initialPreconditionedResidualVector);
+r0 = b - A(x0);
+Pr0 = P(r0);
+beta = norm(Pr0);
 
-initialOriginalResidual = ...
-    norm(initialOriginalResidualVector) / normB;
-initialPreconditionedResidual = ...
-    beta / normPreconditionedRightHandSide;
+true_res0 = norm(r0) / nrmb;
+precond_res0 = beta / norm_pb;
 
-if beta <= 1e-14 * normPreconditionedRightHandSide
+if beta <= 1e-14 * norm_pb
     error('The preconditioned starting residual is too small.');
 end
 
+% Arnoldi cycle
 
-%% 2. Build the fixed Arnoldi cycle
-
-numberOfUnknowns = length(b);
-V = zeros(numberOfUnknowns, cycleLength + 1);
-V(:, 1) = initialPreconditionedResidualVector / beta;
-H = zeros(cycleLength + 1, cycleLength);
-computedResidualHistory = zeros(cycleLength, 1);
+n = length(b);
+V = zeros(n, m + 1);
+V(:, 1) = Pr0 / beta;
+H = zeros(m + 1, m);
+res = zeros(m, 1);
 
 y = zeros(0, 1);
 breakdown = false;
-stopReason = "cycle_length";
+stop_reason = "cycle_length";
 
-for j = 1:cycleLength
+for j = 1:m
 
-    w = preconditionerFunction(operatorFunction(V(:, j)));
+    w = P(A(V(:, j)));
 
     for i = 1:j
         H(i, j) = V(:, i)' * w;
@@ -97,86 +72,71 @@ for j = 1:cycleLength
 
     H(j + 1, j) = norm(w);
 
-    smallRightHandSide = zeros(j + 1, 1);
-    smallRightHandSide(1) = beta;
-    currentHessenberg = H(1:j + 1, 1:j);
-    y = currentHessenberg \ smallRightHandSide;
-    smallResidual = ...
-        smallRightHandSide - currentHessenberg * y;
-    computedResidualHistory(j) = ...
-        norm(smallResidual) / normPreconditionedRightHandSide;
+    rhs = zeros(j + 1, 1);
+    rhs(1) = beta;
+    Hj = H(1:j + 1, 1:j);
+    y = Hj \ rhs;
+    res(j) = norm(rhs - Hj * y) / norm_pb;
 
-    if displayProgress
+    if verbose
         fprintf([ ...
             'Delayed full GMRES iteration %2d: ', ...
             'computed preconditioned residual %.3e\n'], ...
-            j, computedResidualHistory(j));
+            j, res(j));
     end
 
     if H(j + 1, j) <= ...
-            1e-14 * max(1, norm(currentHessenberg, 'fro'))
+            1e-14 * max(1, norm(Hj, 'fro'))
         breakdown = true;
-        stopReason = "breakdown";
+        stop_reason = "breakdown";
         break
     end
 
-    if j < cycleLength
+    if j < m
         V(:, j + 1) = w / H(j + 1, j);
     end
 
 end
 
+niter = j;
+x = x0 + V(:, 1:niter) * y;
+solver_time = toc(solver_timer);
 
-%% 3. Assemble the solution once and stop the solver timer
+% Independent residuals
 
-numberOfIterations = j;
-x = x0 + V(:, 1:numberOfIterations) * y;
-solverTimeSec = toc(solverTimer);
+diagnostic_timer = tic;
 
+r = b - A(x);
+true_res = norm(r) / nrmb;
+precond_res = norm(P(r)) / norm_pb;
 
-%% 4. Evaluate independent residuals outside the solver timer
+diagnostic_time_sec = toc(diagnostic_timer);
+wall_time_sec = toc(wall_timer);
 
-diagnosticTimer = tic;
-
-originalResidualVector = b - operatorFunction(x);
-originalTrueResidual = norm(originalResidualVector) / normB;
-truePreconditionedResidualVector = ...
-    preconditionerFunction(originalResidualVector);
-truePreconditionedResidual = ...
-    norm(truePreconditionedResidualVector) / ...
-    normPreconditionedRightHandSide;
-
-diagnosticTimeSec = toc(diagnosticTimer);
-wallTimeSec = toc(wallTimer);
-
-
-%% 5. Return the compact cycle evidence
-
-info.iterations = numberOfIterations;
+info.iterations = niter;
 info.converged = ...
-    originalTrueResidual <= targetOriginalTolerance;
+    true_res <= tol;
 info.breakdown = breakdown;
-info.stop_reason = stopReason;
+info.stop_reason = stop_reason;
 info.initial_original_true_relative_residual = ...
-    initialOriginalResidual;
+    true_res0;
 info.initial_preconditioned_true_relative_residual = ...
-    initialPreconditionedResidual;
+    precond_res0;
 info.computed_preconditioned_relative_residual = ...
-    computedResidualHistory(1:numberOfIterations);
+    res(1:niter);
 info.true_preconditioned_relative_residual = ...
-    truePreconditionedResidual;
-info.original_true_relative_residual = originalTrueResidual;
+    precond_res;
+info.original_true_relative_residual = true_res;
 info.preconditioned_residual_gap = abs( ...
-    truePreconditionedResidual - ...
-    computedResidualHistory(numberOfIterations));
+    precond_res - res(niter));
 info.norm_preconditioned_right_hand_side = ...
-    normPreconditionedRightHandSide;
-info.H = H(1:numberOfIterations + 1, 1:numberOfIterations);
+    norm_pb;
+info.H = H(1:niter + 1, 1:niter);
 info.y = y;
-info.number_of_basis_vectors = numberOfIterations + 1;
+info.number_of_basis_vectors = niter + 1;
 info.orthogonalisation_passes = 1;
-info.solver_time_sec = solverTimeSec;
-info.diagnostic_time_sec = diagnosticTimeSec;
-info.wall_time_sec = wallTimeSec;
+info.solver_time_sec = solver_time;
+info.diagnostic_time_sec = diagnostic_time_sec;
+info.wall_time_sec = wall_time_sec;
 
 end

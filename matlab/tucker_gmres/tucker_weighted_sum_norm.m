@@ -1,51 +1,43 @@
-function [sumNorm, info] = tucker_weighted_sum_norm(terms, coefficients)
+function [sum_norm, info] = tucker_weighted_sum_norm(terms, coeff)
 %TUCKER_WEIGHTED_SUM_NORM Norm of a formal weighted Tucker sum.
-%
-% The calculation uses pairwise Tucker inner products. It does not form the
-% block Tucker core of the complete sum.
 
+[terms, coeff] = check_formal_sum(terms, coeff);
+nterms = numel(terms);
 
-%% 1. Check the formal sum
+% Form the small Gram matrix
 
-[terms, coefficients] = check_formal_sum(terms, coefficients);
-numberOfTerms = numel(terms);
+G = zeros(nterms);
 
+for row_idx = 1:nterms
+    G(row_idx, row_idx) = ...
+        real(innerprod(terms{row_idx}, terms{row_idx}));
 
-%% 2. Form the small Gram matrix
-
-gramMatrix = zeros(numberOfTerms);
-
-for rowIndex = 1:numberOfTerms
-    gramMatrix(rowIndex, rowIndex) = ...
-        real(innerprod(terms{rowIndex}, terms{rowIndex}));
-
-    for columnIndex = rowIndex + 1:numberOfTerms
-        value = real(innerprod(terms{rowIndex}, terms{columnIndex}));
-        gramMatrix(rowIndex, columnIndex) = value;
-        gramMatrix(columnIndex, rowIndex) = value;
+    for col_idx = row_idx + 1:nterms
+        value = real(innerprod(terms{row_idx}, terms{col_idx}));
+        G(row_idx, col_idx) = value;
+        G(col_idx, row_idx) = value;
     end
 end
 
-squaredNorm = real(coefficients.' * gramMatrix * coefficients);
-roundoffScale = norm(coefficients, 1)^2 * ...
-    max(1, max(abs(gramMatrix), [], 'all'));
+norm_sq = real(coeff.' * G * coeff);
+roundoff_scale = norm(coeff, 1)^2 * ...
+    max(1, max(abs(G), [], 'all'));
 
-if squaredNorm < 0 && abs(squaredNorm) <= 100 * eps * roundoffScale
-    squaredNorm = 0;
-elseif squaredNorm < 0
+if norm_sq < 0 && abs(norm_sq) <= 100 * eps * roundoff_scale
+    norm_sq = 0;
+elseif norm_sq < 0
     error('The weighted Tucker sum produced a negative squared norm.');
 end
 
-sumNorm = sqrt(squaredNorm);
+sum_norm = sqrt(norm_sq);
 
-info.gram_matrix = gramMatrix;
-info.squared_norm = squaredNorm;
-info.number_of_terms = numberOfTerms;
+info.gram_matrix = G;
+info.squared_norm = norm_sq;
+info.number_of_terms = nterms;
 
 end
 
-
-function [terms, coefficients] = check_formal_sum(terms, coefficients)
+function [terms, coeff] = check_formal_sum(terms, coeff)
 %CHECK_FORMAL_SUM Validate a weighted collection of Tucker tensors.
 
 if ~iscell(terms) || isempty(terms)
@@ -53,20 +45,20 @@ if ~iscell(terms) || isempty(terms)
 end
 
 terms = terms(:);
-coefficients = double(coefficients(:));
+coeff = double(coeff(:));
 
-if numel(coefficients) ~= numel(terms) || ...
-        any(~isfinite(coefficients))
-    error('coefficients must contain one finite value per Tucker term.');
+if numel(coeff) ~= numel(terms) || ...
+        any(~isfinite(coeff))
+    error('coeff must contain one finite value per Tucker term.');
 end
 
-referenceSize = size(terms{1});
+reference_size = size(terms{1});
 
-for termIndex = 1:numel(terms)
-    if ~isa(terms{termIndex}, 'ttensor')
+for term_idx = 1:numel(terms)
+    if ~isa(terms{term_idx}, 'ttensor')
         error('Every formal-sum term must be a Tensor Toolbox ttensor.');
     end
-    if ~isequal(size(terms{termIndex}), referenceSize)
+    if ~isequal(size(terms{term_idx}), reference_size)
         error('Every formal-sum term must have the same dimensions.');
     end
 end

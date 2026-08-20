@@ -1,252 +1,228 @@
 function [Z, info] = tucker_roundsum_rhosvd( ...
-    terms, coefficients, rangeSketchSizes, compressionTolerance, ...
-    maximumMultilinearRank, randomSeed, measureErrorDiagnostics)
+    terms, coeff, range_sizes, eta, ...
+    max_rank, seed, check_error)
 %TUCKER_ROUNDSUM_RHOSVD Approximate a weighted Tucker sum by RHOSVD.
-%
-% The mode range sketches are accumulated term by term. The exact block
-% Tucker core of the complete sum is never constructed. Independent
-% standard Gaussian factor matrices represent each mode range map. The
-% caller supplies a seed, and a fresh map collection is drawn on every
-% invocation.
-%
-% The requested output rank must satisfy R_n <= k_n in every mode. If no
-% rank cap is supplied, the range sketch sizes are used as the cap.
-% Exact realised errors are measured by default. A timing experiment may
-% disable them without changing the randomized approximation.
 
 if nargin < 7
-    measureErrorDiagnostics = true;
+    check_error = true;
 end
 
-if ~islogical(measureErrorDiagnostics) || ...
-        ~isscalar(measureErrorDiagnostics)
-    error('measureErrorDiagnostics must be one logical value.');
+if ~islogical(check_error) || ...
+        ~isscalar(check_error)
+    error('check_error must be one logical value.');
 end
 
-callTimer = tic;
+call_timer = tic;
 
+[terms, coeff, n] = ...
+    check_roundsum_inputs(terms, coeff);
 
-%% 1. Check the formal sum and RHOSVD settings
+d = numel(n);
+range_sizes = expand_mode_vector( ...
+    range_sizes, d, 'range_sizes');
 
-[terms, coefficients, tensorDimensions] = ...
-    check_roundsum_inputs(terms, coefficients);
-
-numberOfModes = numel(tensorDimensions);
-rangeSketchSizes = expand_mode_vector( ...
-    rangeSketchSizes, numberOfModes, 'rangeSketchSizes');
-
-if any(rangeSketchSizes < 1) || ...
-        any(rangeSketchSizes ~= floor(rangeSketchSizes)) || ...
-        any(rangeSketchSizes > tensorDimensions)
+if any(range_sizes < 1) || ...
+        any(range_sizes ~= floor(range_sizes)) || ...
+        any(range_sizes > n)
     error(['Every range sketch size must be a positive integer no ', ...
            'larger than its tensor mode.']);
 end
 
-if ~isscalar(compressionTolerance) || compressionTolerance <= 0 || ...
-        compressionTolerance >= 1
-    error('compressionTolerance must be one number between 0 and 1.');
+if ~isscalar(eta) || eta <= 0 || ...
+        eta >= 1
+    error('eta must be one number between 0 and 1.');
 end
 
-if isempty(maximumMultilinearRank)
-    maximumRanks = rangeSketchSizes;
+if isempty(max_rank)
+    max_ranks = range_sizes;
 else
-    maximumRanks = normalise_tucker_rank_cap( ...
-        maximumMultilinearRank, tensorDimensions);
+    max_ranks = normalise_tucker_rank_cap( ...
+        max_rank, n);
 end
 
-if any(maximumRanks > rangeSketchSizes)
+if any(max_ranks > range_sizes)
     error('Every RoundSum output rank R_n must satisfy R_n <= k_n.');
 end
 
-if ~isscalar(randomSeed) || ~isfinite(randomSeed) || ...
-        randomSeed < 0 || randomSeed ~= floor(randomSeed)
-    error('randomSeed must be a nonnegative integer.');
+if ~isscalar(seed) || ~isfinite(seed) || ...
+        seed < 0 || seed ~= floor(seed)
+    error('seed must be a nonnegative integer.');
 end
 
-[inputNorm, inputNormInfo] = ...
-    tucker_weighted_sum_norm(terms, coefficients);
-inputScale = 0;
+[norm_x, input_norm_info] = ...
+    tucker_weighted_sum_norm(terms, coeff);
+input_scale = 0;
 
-for termIndex = 1:numel(terms)
-    inputScale = inputScale + ...
-        abs(coefficients(termIndex)) * norm(terms{termIndex});
+for term_idx = 1:numel(terms)
+    input_scale = input_scale + ...
+        abs(coeff(term_idx)) * norm(terms{term_idx});
 end
 
-zeroThreshold = 100 * eps * max(1, inputScale);
+zero_threshold = 100 * eps * max(1, input_scale);
 
-if inputNorm <= zeroThreshold
+if norm_x <= zero_threshold
     Z = 0 * terms{1};
     info = zero_roundsum_info( ...
-        inputNorm, inputNormInfo, rangeSketchSizes, maximumRanks, ...
-        compressionTolerance, randomSeed, numberOfModes, ...
-        measureErrorDiagnostics, callTimer);
+        norm_x, input_norm_info, range_sizes, max_ranks, ...
+        eta, seed, d, ...
+        check_error, call_timer);
     return
 end
 
+% Draw fresh standard Gaussian mode range maps
 
-%% 2. Draw fresh standard Gaussian mode range maps
-
-mapTimer = tic;
+map_timer = tic;
 maps = create_tucker_roundsum_maps( ...
-    tensorDimensions, rangeSketchSizes, randomSeed);
-mapGenerationTime = toc(mapTimer);
+    n, range_sizes, seed);
+map_generation_time = toc(map_timer);
 
+% Form the mode range sketches term by term
 
-%% 3. Form the mode range sketches term by term
+range_bases = cell(d, 1);
+range_sketch_numerical_ranks = zeros(1, d);
+range_sketch_time_by_mode = zeros(1, d);
+range_qr_time_by_mode = zeros(1, d);
 
-rangeBases = cell(numberOfModes, 1);
-rangeSketchNumericalRanks = zeros(1, numberOfModes);
-rangeSketchTimeByMode = zeros(1, numberOfModes);
-rangeQrTimeByMode = zeros(1, numberOfModes);
+for target_mode = 1:d
+    component_timer = tic;
+    one_range_sketch = zeros( ...
+        n(target_mode), range_sizes(target_mode));
 
-for targetMode = 1:numberOfModes
-    componentTimer = tic;
-    oneRangeSketch = zeros( ...
-        tensorDimensions(targetMode), rangeSketchSizes(targetMode));
+    for term_idx = 1:numel(terms)
+        one_term = terms{term_idx};
 
-    for termIndex = 1:numel(terms)
-        oneTerm = terms{termIndex};
+        for sketch_column = 1:range_sizes(target_mode)
+            contracted_core = one_term.core;
 
-        for sketchColumn = 1:rangeSketchSizes(targetMode)
-            contractedCore = oneTerm.core;
-
-            for sourceMode = 1:numberOfModes
-                if sourceMode ~= targetMode
-                    projectedVector = oneTerm.u{sourceMode}.' * ...
-                        maps.factors{targetMode}{sourceMode}( ...
-                        :, sketchColumn);
-                    contractedCore = ttm( ...
-                        contractedCore, projectedVector.', sourceMode);
+            for source_mode = 1:d
+                if source_mode ~= target_mode
+                    projected_vector = one_term.u{source_mode}.' * ...
+                        maps.factors{target_mode}{source_mode}( ...
+                        :, sketch_column);
+                    contracted_core = ttm( ...
+                        contracted_core, projected_vector.', source_mode);
                 end
             end
 
-            modeVector = reshape(double(contractedCore), [], 1);
-            oneRangeSketch(:, sketchColumn) = ...
-                oneRangeSketch(:, sketchColumn) + ...
-                coefficients(termIndex) * ...
-                (oneTerm.u{targetMode} * modeVector);
+            mode_vector = reshape(double(contracted_core), [], 1);
+            one_range_sketch(:, sketch_column) = ...
+                one_range_sketch(:, sketch_column) + ...
+                coeff(term_idx) * ...
+                (one_term.u{target_mode} * mode_vector);
         end
     end
 
-    rangeSketchTimeByMode(targetMode) = toc(componentTimer);
-    rangeSketchNumericalRanks(targetMode) = ...
-        numerical_matrix_rank(oneRangeSketch);
+    range_sketch_time_by_mode(target_mode) = toc(component_timer);
+    range_sketch_numerical_ranks(target_mode) = ...
+        numerical_matrix_rank(one_range_sketch);
 
-    componentTimer = tic;
-    [rangeBases{targetMode}, ~] = qr(oneRangeSketch, 0);
-    rangeQrTimeByMode(targetMode) = toc(componentTimer);
+    component_timer = tic;
+    [range_bases{target_mode}, ~] = qr(one_range_sketch, 0);
+    range_qr_time_by_mode(target_mode) = toc(component_timer);
 end
 
+% Form and compress the small projected core
 
-%% 4. Form and compress the small projected core
+component_timer = tic;
+projected_core_values = zeros(range_sizes);
 
-componentTimer = tic;
-projectedCoreValues = zeros(rangeSketchSizes);
+for term_idx = 1:numel(terms)
+    projected_term_core = terms{term_idx}.core;
 
-for termIndex = 1:numel(terms)
-    projectedTermCore = terms{termIndex}.core;
-
-    for mode = 1:numberOfModes
-        projectedTermCore = ttm( ...
-            projectedTermCore, ...
-            rangeBases{mode}.' * terms{termIndex}.u{mode}, mode);
+    for mode = 1:d
+        projected_term_core = ttm( ...
+            projected_term_core, ...
+            range_bases{mode}.' * terms{term_idx}.u{mode}, mode);
     end
 
-    projectedCoreValues = projectedCoreValues + ...
-        coefficients(termIndex) * double(projectedTermCore);
+    projected_core_values = projected_core_values + ...
+        coeff(term_idx) * double(projected_term_core);
 end
 
-projectedCore = tensor(projectedCoreValues);
-projectedCoreTime = toc(componentTimer);
+projected_core = tensor(projected_core_values);
+projected_core_time = toc(component_timer);
 
-componentTimer = tic;
-[compressedCoreTensor, compressionInfo] = sthosvd_round_tensor( ...
-    projectedCore, compressionTolerance, maximumRanks, 1:numberOfModes);
-projectedCoreCompressionTime = toc(componentTimer);
+component_timer = tic;
+[compressed_core_tensor, compression_info] = sthosvd_round_tensor( ...
+    projected_core, eta, max_ranks, 1:d);
+projected_core_compression_time = toc(component_timer);
 
+component_timer = tic;
+output_factors = cell(d, 1);
 
-%% 5. Return to the original mode spaces
-
-componentTimer = tic;
-outputFactors = cell(numberOfModes, 1);
-
-for mode = 1:numberOfModes
-    outputFactors{mode} = ...
-        rangeBases{mode} * compressedCoreTensor.u{mode};
+for mode = 1:d
+    output_factors{mode} = ...
+        range_bases{mode} * compressed_core_tensor.u{mode};
 end
 
-Z = ttensor(compressedCoreTensor.core, outputFactors);
-factorReconstructionTime = toc(componentTimer);
+Z = ttensor(compressed_core_tensor.core, output_factors);
+factor_reconstruction_time = toc(component_timer);
 
+algorithm_time = toc(call_timer);
+if check_error
+    error_diagnostic_timer = tic;
+    projected_tensor = ttensor(projected_core, range_bases);
+    [range_error, ~] = tucker_weighted_sum_norm( ...
+        [terms; {projected_tensor}], [coeff; -1]);
+    [total_error, ~] = tucker_weighted_sum_norm( ...
+        [terms; {Z}], [coeff; -1]);
 
-%% 6. Record realised errors and map information
-
-algorithmTime = toc(callTimer);
-if measureErrorDiagnostics
-    errorDiagnosticTimer = tic;
-    projectedTensor = ttensor(projectedCore, rangeBases);
-    [rangeError, ~] = tucker_weighted_sum_norm( ...
-        [terms; {projectedTensor}], [coefficients; -1]);
-    [totalError, ~] = tucker_weighted_sum_norm( ...
-        [terms; {Z}], [coefficients; -1]);
-
-    if inputNorm == 0
-        relativeRangeError = 0;
-        relativeTotalError = 0;
+    if norm_x == 0
+        relative_range_error = 0;
+        relative_total_error = 0;
     else
-        relativeRangeError = rangeError / inputNorm;
-        relativeTotalError = totalError / inputNorm;
+        relative_range_error = range_error / norm_x;
+        relative_total_error = total_error / norm_x;
     end
 
-    compressedProjectedCore = full(compressedCoreTensor);
-    coreCompressionError = norm(projectedCore - compressedProjectedCore);
-    errorDiagnosticTime = toc(errorDiagnosticTimer);
+    compressed_projected_core = full(compressed_core_tensor);
+    core_compression_error = norm(projected_core - compressed_projected_core);
+    error_diagnostic_time = toc(error_diagnostic_timer);
 else
-    rangeError = NaN;
-    relativeRangeError = NaN;
-    coreCompressionError = NaN;
-    totalError = NaN;
-    relativeTotalError = NaN;
-    errorDiagnosticTime = 0;
+    range_error = NaN;
+    relative_range_error = NaN;
+    core_compression_error = NaN;
+    total_error = NaN;
+    relative_total_error = NaN;
+    error_diagnostic_time = 0;
 end
 
-info.input_formal_norm = inputNorm;
-info.input_norm_gram_matrix = inputNormInfo.gram_matrix;
+info.input_formal_norm = norm_x;
+info.input_norm_gram_matrix = input_norm_info.gram_matrix;
 info.number_of_terms = numel(terms);
-info.range_sketch_sizes = rangeSketchSizes;
-info.maximum_ranks = maximumRanks;
-info.requested_tolerance = compressionTolerance;
-info.random_seed = randomSeed;
+info.range_sketch_sizes = range_sizes;
+info.maximum_ranks = max_ranks;
+info.requested_tolerance = eta;
+info.random_seed = seed;
 info.maps_are_new_for_call = true;
-info.error_diagnostics_measured = measureErrorDiagnostics;
+info.error_diagnostics_measured = check_error;
 info.map_distribution = maps.distribution;
 info.map_factor_entry_mean = maps.factor_entry_mean;
 info.map_factor_entry_variance = maps.factor_entry_variance;
-info.range_sketch_numerical_ranks = rangeSketchNumericalRanks;
-info.range_error_norm = rangeError;
-info.relative_range_error = relativeRangeError;
-info.core_compression_error_norm = coreCompressionError;
-info.total_error_norm = totalError;
-info.relative_total_error = relativeTotalError;
+info.range_sketch_numerical_ranks = range_sketch_numerical_ranks;
+info.range_error_norm = range_error;
+info.relative_range_error = relative_range_error;
+info.core_compression_error_norm = core_compression_error;
+info.total_error_norm = total_error;
+info.relative_total_error = relative_total_error;
 info.output_ranks = size(Z.core);
-info.rank_cap_active = compressionInfo.rank_cap_active;
-info.sthosvd = compressionInfo;
-info.map_generation_time_sec = mapGenerationTime;
-info.range_sketch_time_by_mode_sec = rangeSketchTimeByMode;
-info.range_qr_time_by_mode_sec = rangeQrTimeByMode;
-info.projected_core_time_sec = projectedCoreTime;
+info.rank_cap_active = compression_info.rank_cap_active;
+info.sthosvd = compression_info;
+info.map_generation_time_sec = map_generation_time;
+info.range_sketch_time_by_mode_sec = range_sketch_time_by_mode;
+info.range_qr_time_by_mode_sec = range_qr_time_by_mode;
+info.projected_core_time_sec = projected_core_time;
 info.projected_core_compression_time_sec = ...
-    projectedCoreCompressionTime;
-info.factor_reconstruction_time_sec = factorReconstructionTime;
-info.algorithm_time_sec = algorithmTime;
-info.error_diagnostic_time_sec = errorDiagnosticTime;
-info.call_time_sec = toc(callTimer);
+    projected_core_compression_time;
+info.factor_reconstruction_time_sec = factor_reconstruction_time;
+info.algorithm_time_sec = algorithm_time;
+info.error_diagnostic_time_sec = error_diagnostic_time;
+info.call_time_sec = toc(call_timer);
 
 end
 
-
-function [terms, coefficients, tensorDimensions] = ...
-    check_roundsum_inputs(terms, coefficients)
+function [terms, coeff, n] = ...
+    check_roundsum_inputs(terms, coeff)
 %CHECK_ROUNDSUM_INPUTS Validate the weighted Tucker collection.
 
 if ~iscell(terms) || isempty(terms)
@@ -254,91 +230,88 @@ if ~iscell(terms) || isempty(terms)
 end
 
 terms = terms(:);
-coefficients = double(coefficients(:));
+coeff = double(coeff(:));
 
-if numel(coefficients) ~= numel(terms) || ...
-        any(~isfinite(coefficients))
-    error('coefficients must contain one finite value per Tucker term.');
+if numel(coeff) ~= numel(terms) || ...
+        any(~isfinite(coeff))
+    error('coeff must contain one finite value per Tucker term.');
 end
 
 if ~isa(terms{1}, 'ttensor')
     error('Every RoundSum term must be a Tensor Toolbox ttensor.');
 end
 
-tensorDimensions = double(size(terms{1}));
+n = double(size(terms{1}));
 
-for termIndex = 1:numel(terms)
-    if ~isa(terms{termIndex}, 'ttensor') || ...
-            ~isequal(double(size(terms{termIndex})), tensorDimensions)
+for term_idx = 1:numel(terms)
+    if ~isa(terms{term_idx}, 'ttensor') || ...
+            ~isequal(double(size(terms{term_idx})), n)
         error('Every RoundSum term must be a same-sized ttensor.');
     end
 end
 
 end
 
-
-function values = expand_mode_vector(values, numberOfModes, argumentName)
+function values = expand_mode_vector(values, d, arg_name)
 %EXPAND_MODE_VECTOR Expand a scalar to one value per tensor mode.
 
 values = double(values(:).');
 
 if isscalar(values)
-    values = repmat(values, 1, numberOfModes);
-elseif numel(values) ~= numberOfModes
-    error('%s must be scalar or contain one value per mode.', argumentName);
+    values = repmat(values, 1, d);
+elseif numel(values) ~= d
+    error('%s must be scalar or contain one value per mode.', arg_name);
 end
 
 end
 
-
-function numericalRank = numerical_matrix_rank(matrix)
+function numerical_rank = numerical_matrix_rank(matrix)
 %NUMERICAL_MATRIX_RANK Compute a scale-aware numerical rank.
 
-singularValues = svd(matrix, 'econ');
+svals = svd(matrix, 'econ');
 
-if isempty(singularValues) || singularValues(1) == 0
-    numericalRank = 0;
+if isempty(svals) || svals(1) == 0
+    numerical_rank = 0;
 else
-    threshold = max(size(matrix)) * eps(singularValues(1));
-    numericalRank = sum(singularValues > threshold);
+    threshold = max(size(matrix)) * eps(svals(1));
+    numerical_rank = sum(svals > threshold);
 end
 
 end
-
 
 function info = zero_roundsum_info( ...
-    inputNorm, inputNormInfo, rangeSketchSizes, maximumRanks, ...
-    compressionTolerance, randomSeed, numberOfModes, ...
-    measureErrorDiagnostics, callTimer)
+    norm_x, input_norm_info, range_sizes, max_ranks, ...
+    eta, seed, d, ...
+    check_error, call_timer)
 %ZERO_ROUNDSUM_INFO Report a formal sum that is already zero.
 
-info.input_formal_norm = inputNorm;
-info.input_norm_gram_matrix = inputNormInfo.gram_matrix;
-info.number_of_terms = inputNormInfo.number_of_terms;
-info.range_sketch_sizes = rangeSketchSizes;
-info.maximum_ranks = maximumRanks;
-info.requested_tolerance = compressionTolerance;
-info.random_seed = randomSeed;
+info.input_formal_norm = norm_x;
+info.input_norm_gram_matrix = input_norm_info.gram_matrix;
+info.number_of_terms = input_norm_info.number_of_terms;
+info.range_sketch_sizes = range_sizes;
+info.maximum_ranks = max_ranks;
+info.requested_tolerance = eta;
+info.random_seed = seed;
 info.maps_are_new_for_call = false;
-info.error_diagnostics_measured = measureErrorDiagnostics;
+info.error_diagnostics_measured = check_error;
 info.map_distribution = "standard_normal";
 info.map_factor_entry_mean = 0;
 info.map_factor_entry_variance = 1;
-info.range_sketch_numerical_ranks = zeros(1, numberOfModes);
+info.range_sketch_numerical_ranks = zeros(1, d);
 info.range_error_norm = 0;
 info.relative_range_error = 0;
 info.core_compression_error_norm = 0;
 info.total_error_norm = 0;
 info.relative_total_error = 0;
-info.output_ranks = zeros(1, numberOfModes);
+info.output_ranks = zeros(1, d);
 info.rank_cap_active = false;
 info.map_generation_time_sec = 0;
-info.range_sketch_time_by_mode_sec = zeros(1, numberOfModes);
-info.range_qr_time_by_mode_sec = zeros(1, numberOfModes);
+info.range_sketch_time_by_mode_sec = zeros(1, d);
+info.range_qr_time_by_mode_sec = zeros(1, d);
 info.projected_core_time_sec = 0;
 info.projected_core_compression_time_sec = 0;
 info.factor_reconstruction_time_sec = 0;
-info.algorithm_time_sec = toc(callTimer);
+info.algorithm_time_sec = toc(call_timer);
 info.error_diagnostic_time_sec = 0;
 info.call_time_sec = info.algorithm_time_sec;
 

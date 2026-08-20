@@ -31,16 +31,16 @@ addParameter(p, 'FaceAlpha', 0.14, ...
 parse(p, varargin{:});
 
 held = ishold(ax);
-xScale = ax.XScale;
-yScale = ax.YScale;
+x_scale = ax.XScale;
+y_scale = ax.YScale;
 hold(ax, 'on');
 band = fill(ax, [x; flipud(x)], [lower; flipud(upper)], color, ...
     'FaceAlpha', p.Results.FaceAlpha, ...
     'EdgeColor', 'none', ...
     'HandleVisibility', 'off', ...
     'DisplayName', '');
-ax.XScale = xScale;
-ax.YScale = yScale;
+ax.XScale = x_scale;
+ax.YScale = y_scale;
 uistack(band, 'bottom');
 if ~held
     hold(ax, 'off');

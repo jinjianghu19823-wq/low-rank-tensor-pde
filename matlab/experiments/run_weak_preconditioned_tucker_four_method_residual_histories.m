@@ -1,127 +1,122 @@
 function run_weak_preconditioned_tucker_four_method_residual_histories()
 %RUN_WEAK_PRECONDITIONED_TUCKER_FOUR_METHOD_RESIDUAL_HISTORIES Diagnostics.
-%
-% Evaluate the original true relative residual at the frozen checkpoints
-% j=0,20,...,100. These runs are diagnostic only. Their solution assembly
-% and residual evaluation times are excluded from the protected timing
-% evidence used in the scaling comparison.
 
-
-%% 1. Locate the repository and existing endpoint evidence
-
-experimentFolder = fileparts(mfilename('fullpath'));
-matlabFolder = fileparts(experimentFolder);
-repositoryFolder = fileparts(matlabFolder);
-addpath(genpath(matlabFolder));
+experiment_folder = fileparts(mfilename('fullpath'));
+matlab_folder = fileparts(experiment_folder);
+repository_folder = fileparts(matlab_folder);
+addpath(genpath(matlab_folder));
 add_toolboxes();
 
 config = weak_preconditioned_tucker_four_method_scaling_config();
-processedFolder = fullfile(repositoryFolder, 'experiments', 'processed');
-rawFolder = fullfile(repositoryFolder, 'experiments', 'raw');
-if ~isfolder(processedFolder), mkdir(processedFolder); end
-if ~isfolder(rawFolder), mkdir(rawFolder); end
+processed_folder = fullfile(repository_folder, 'experiments', 'processed');
+raw_folder = fullfile(repository_folder, 'experiments', 'raw');
+if ~isfolder(processed_folder), mkdir(processed_folder); end
+if ~isfolder(raw_folder), mkdir(raw_folder); end
 
-prefix = fullfile(processedFolder, config.outputPrefix);
-endpointPath = prefix + "_accuracy_runs.csv";
-historyPath = prefix + "_true_residual_history.csv";
-checkPath = prefix + "_true_residual_history_checks.csv";
-rawPath = fullfile(rawFolder, ...
+prefix = fullfile(processed_folder, config.outputPrefix);
+endpoint_path = prefix + "_accuracy_runs.csv";
+history_path = prefix + "_true_residual_history.csv";
+check_path = prefix + "_true_residual_history_checks.csv";
+raw_path = fullfile(raw_folder, ...
     config.outputPrefix + "_true_residual_history.mat");
-completeMarker = fullfile(rawFolder, ...
+complete_marker = fullfile(raw_folder, ...
     config.outputPrefix + "_TRUE_RESIDUAL_HISTORY_COMPLETE.txt");
 
-assert(isfile(endpointPath), ...
+assert(isfile(endpoint_path), ...
     'Run the protected scaling study before its diagnostic histories.');
-endpointRuns = readtable(endpointPath, 'TextType', 'string');
-diagnosticIterations = config.diagnosticCheckpoints(2:end);
+endpoint_runs = readtable(endpoint_path, 'TextType', 'string');
+check_it = config.diagnosticCheckpoints(2:end);
 
 fprintf('\nUntimed original true-residual histories\n');
 fprintf('N values %s and checkpoints %s\n\n', ...
     strjoin(string(config.candidateN.'), ', '), ...
     strjoin(string(config.diagnosticCheckpoints.'), ', '));
 
-
-%% 2. Run one deterministic history or five randomized histories
-
-historyTable = table();
-checkTable = table();
-for gridIndex = 1:numel(config.candidateN)
-    N = config.candidateN(gridIndex);
+history_table = table();
+check_table = table();
+for grid_index = 1:numel(config.candidateN)
+    N = config.candidateN(grid_index);
     fprintf('Diagnostic histories at N=%d\n', N);
     problem = build_weak_preconditioned_tucker_scaling_problem(config, N);
 
-    for methodIndex = 1:numel(config.methodIds)
-        methodId = config.methodIds(methodIndex);
-        methodName = config.methodNames(methodIndex);
-        seeds = diagnostic_seeds(config, methodId);
+    for method_index = 1:numel(config.methodIds)
+        method_id = config.methodIds(method_index);
+        method_name = config.methodNames(method_index);
+        seeds = diagnostic_seeds(config, method_id);
 
-        for seedIndex = 1:numel(seeds)
-            seed = seeds(seedIndex);
-            caseFile = diagnostic_case_file( ...
-                config, rawFolder, N, methodId, seed);
+        for seed_index = 1:numel(seeds)
+            seed = seeds(seed_index);
+            case_file = diagnostic_case_file( ...
+                config, raw_folder, N, method_id, seed);
 
-            if isfile(caseFile)
+            if isfile(case_file)
                 fprintf('  Loading %s seed %s\n', ...
-                    methodName, printable_seed(seed));
-                loaded = load(caseFile, 'caseData');
-                caseData = loaded.caseData;
+                    method_name, printable_seed(seed));
+                loaded = load(case_file, 'caseData');
+                case_data = loaded.caseData;
             else
                 fprintf('  Running %s seed %s\n', ...
-                    methodName, printable_seed(seed));
+                    method_name, printable_seed(seed));
                 [~, info] = ...
                     execute_weak_preconditioned_tucker_scaling_method( ...
-                    config, problem, methodId, seed, ...
-                    diagnosticIterations);
-                referenceResidual = endpoint_residual( ...
-                    endpointRuns, N, methodId, seed);
-                caseData = build_case_data( ...
-                    config, N, methodId, methodName, seed, info, ...
-                    referenceResidual);
-                save(caseFile, 'config', 'caseData', '-v7.3');
+                    config, problem, method_id, seed, ...
+                    check_it);
+                reference_residual = endpoint_residual( ...
+                    endpoint_runs, N, method_id, seed);
+                case_data = build_case_data( ...
+                    config, N, method_id, method_name, seed, info, ...
+                    reference_residual);
+                save_case_data(case_file, config, case_data);
             end
 
-            historyTable = append_table( ...
-                historyTable, caseData.historyTable);
-            checkTable = append_table(checkTable, caseData.checkTable);
-            writetable(historyTable, historyPath);
-            writetable(checkTable, checkPath);
+            history_table = append_table( ...
+                history_table, case_data.historyTable);
+            check_table = append_table(check_table, case_data.checkTable);
+            writetable(history_table, history_path);
+            writetable(check_table, check_path);
             fprintf('    final residual %.6e, endpoint drift %.3e\n', ...
-                caseData.checkTable.final_true_relative_residual, ...
-                caseData.checkTable.endpoint_relative_drift);
+                case_data.checkTable.final_true_relative_residual, ...
+                case_data.checkTable.endpoint_relative_drift);
         end
     end
     clear problem
 end
 
-
-%% 3. Save and plot the completed diagnostic evidence
-
-assert(all(checkTable.pass), ...
+assert(all(check_table.pass), ...
     'At least one true-residual history check failed.');
-save(rawPath, 'config', 'historyTable', 'checkTable', '-v7.3');
+payload.config = config;
+payload.historyTable = history_table;
+payload.checkTable = check_table;
+save(raw_path, '-struct', 'payload', '-v7.3');
 
-markerFile = fopen(completeMarker, 'w');
-assert(markerFile >= 0, 'Could not create the completion marker.');
-fprintf(markerFile, '%s\n', config.experimentId);
-fclose(markerFile);
+marker_file = fopen(complete_marker, 'w');
+assert(marker_file >= 0, 'Could not create the completion marker.');
+fprintf(marker_file, '%s\n', config.experimentId);
+fclose(marker_file);
 
 plot_weak_preconditioned_tucker_four_method_scaling();
-fprintf('\nSaved %s\n', historyPath);
+fprintf('\nSaved %s\n', history_path);
 fprintf('All diagnostic history checks passed.\n\n');
 
 end
 
+function save_case_data(path, config, case_data)
 
-function seeds = diagnostic_seeds(config, methodId)
+payload.config = config;
+payload.caseData = case_data;
+save(path, '-struct', 'payload', '-v7.3');
 
-if methodId == "plain" || methodId == "rhosvd_sgmres"
+end
+
+function seeds = diagnostic_seeds(config, method_id)
+
+if method_id == "plain" || method_id == "rhosvd_sgmres"
     seeds = config.residualSketchSeeds;
 else
     seeds = NaN;
 end
 
 end
-
 
 function text = printable_seed(seed)
 
@@ -133,75 +128,72 @@ end
 
 end
 
-
 function path = diagnostic_case_file( ...
-    config, rawFolder, N, methodId, seed)
+    config, raw_folder, N, method_id, seed)
 
 if isfinite(seed)
-    seedText = sprintf('seed%06d', seed);
+    seed_text = sprintf('seed%06d', seed);
 else
-    seedText = 'deterministic';
+    seed_text = 'deterministic';
 end
-path = fullfile(rawFolder, sprintf( ...
+path = fullfile(raw_folder, sprintf( ...
     '%s_true_residual_history_N%03d_%s_%s.mat', ...
-    config.outputPrefix, N, methodId, seedText));
+    config.outputPrefix, N, method_id, seed_text));
 
 end
 
+function residual = endpoint_residual(endpoint_runs, N, method_id, seed)
 
-function residual = endpoint_residual(endpointRuns, N, methodId, seed)
-
-rows = endpointRuns.N == N & endpointRuns.method_id == methodId;
+rows = endpoint_runs.N == N & endpoint_runs.method_id == method_id;
 if isfinite(seed)
-    rows = rows & endpointRuns.residual_seed == seed;
+    rows = rows & endpoint_runs.residual_seed == seed;
 else
-    rows = rows & isnan(endpointRuns.residual_seed);
+    rows = rows & isnan(endpoint_runs.residual_seed);
 end
 assert(nnz(rows) == 1, ...
     'Expected one endpoint reference for N=%d, method %s, seed %s.', ...
-    N, methodId, printable_seed(seed));
-residual = endpointRuns.true_relative_residual(rows);
+    N, method_id, printable_seed(seed));
+residual = endpoint_runs.true_relative_residual(rows);
 
 end
 
-
-function caseData = build_case_data( ...
-    config, N, methodId, methodName, seed, info, referenceResidual)
+function case_data = build_case_data( ...
+    config, N, method_id, method_name, seed, info, reference_residual)
 
 iteration = info.true_residual_iteration(:);
 residual = info.true_relative_residual(:);
-expectedIteration = config.diagnosticCheckpoints(:);
-endpointRelativeDrift = abs(residual(end) - referenceResidual) / ...
-    max(referenceResidual, realmin);
+expected_iteration = config.diagnosticCheckpoints(:);
+endpoint_relative_drift = abs(residual(end) - reference_residual) / ...
+    max(reference_residual, realmin);
 
-iterationComplete = isequal(iteration, expectedIteration);
-finiteResiduals = numel(residual) == numel(expectedIteration) && ...
+iteration_complete = isequal(iteration, expected_iteration);
+finite_residuals = numel(residual) == numel(expected_iteration) && ...
     all(isfinite(residual)) && all(residual > 0);
-completedWork = info.iterations == config.maximumIterations && ...
+completed_work = info.iterations == config.maximumIterations && ...
     string(info.stop_reason) == "iteration_limit";
-safeExecution = ~logical_field(info, 'breakdown') && ...
+safe_execution = ~logical_field(info, 'breakdown') && ...
     ~logical_field(info, 'stopped_for_basis_memory') && ...
     ~roundsum_rank_cap_active(info);
-endpointConsistent = endpointRelativeDrift <= ...
+endpoint_consistent = endpoint_relative_drift <= ...
     config.maximumTimingEndpointRelativeDrift;
-pass = iterationComplete && finiteResiduals && completedWork && ...
-    safeExecution && endpointConsistent;
+pass = iteration_complete && finite_residuals && completed_work && ...
+    safe_execution && endpoint_consistent;
 
-numberOfRows = numel(iteration);
-caseData.historyTable = table( ...
-    repmat(N, numberOfRows, 1), ...
-    repmat(string(methodId), numberOfRows, 1), ...
-    repmat(string(methodName), numberOfRows, 1), ...
-    repmat(seed, numberOfRows, 1), iteration, residual, ...
+number_of_rows = numel(iteration);
+case_data.historyTable = table( ...
+    repmat(N, number_of_rows, 1), ...
+    repmat(string(method_id), number_of_rows, 1), ...
+    repmat(string(method_name), number_of_rows, 1), ...
+    repmat(seed, number_of_rows, 1), iteration, residual, ...
     'VariableNames', {'N', 'method_id', 'method_name', ...
     'residual_seed', 'arnoldi_iteration', ...
     'true_relative_residual'});
 
-caseData.checkTable = table( ...
-    N, string(methodId), seed, info.iterations, ...
-    string(info.stop_reason), numel(iteration), iterationComplete, ...
-    finiteResiduals, safeExecution, residual(end), referenceResidual, ...
-    endpointRelativeDrift, pass, ...
+case_data.checkTable = table( ...
+    N, string(method_id), seed, info.iterations, ...
+    string(info.stop_reason), numel(iteration), iteration_complete, ...
+    finite_residuals, safe_execution, residual(end), reference_residual, ...
+    endpoint_relative_drift, pass, ...
     'VariableNames', {'N', 'method_id', 'residual_seed', ...
     'completed_iterations', 'stop_reason', 'checkpoint_count', ...
     'checkpoint_iterations_complete', 'finite_positive_residuals', ...
@@ -209,27 +201,25 @@ caseData.checkTable = table( ...
     'reference_true_relative_residual', 'endpoint_relative_drift', ...
     'pass'});
 
-caseData.info = info;
+case_data.info = info;
 
 end
 
-
-function value = logical_field(info, fieldName)
+function value = logical_field(info, field_name)
 
 value = false;
-if isfield(info, fieldName)
-    value = logical(info.(fieldName));
+if isfield(info, field_name)
+    value = logical(info.(field_name));
 end
 
 end
-
 
 function active = roundsum_rank_cap_active(info)
 
 active = logical_field(info, 'rank_cap_active');
 if isfield(info, 'basis_roundsum_info')
-    active = active || any(cellfun(@(oneInfo) ...
-        logical_field(oneInfo, 'rank_cap_active'), ...
+    active = active || any(cellfun(@(one_info) ...
+        logical_field(one_info, 'rank_cap_active'), ...
         info.basis_roundsum_info));
 end
 if isfield(info, 'solution_roundsum_info')
@@ -239,13 +229,12 @@ end
 
 end
 
-
-function combined = append_table(combined, nextRows)
+function combined = append_table(combined, next_rows)
 
 if isempty(combined)
-    combined = nextRows;
+    combined = next_rows;
 else
-    combined = [combined; nextRows];
+    combined = [combined; next_rows];
 end
 
 end

@@ -1,20 +1,20 @@
 function plot_weak_preconditioned_tucker_four_method_scaling()
 %PLOT_WEAK_PRECONDITIONED_TUCKER_FOUR_METHOD_SCALING Plot scaling evidence.
 
-experimentFolder = fileparts(mfilename('fullpath'));
-matlabFolder = fileparts(experimentFolder);
-repositoryFolder = fileparts(matlabFolder);
-addpath(genpath(matlabFolder));
+experiment_folder = fileparts(mfilename('fullpath'));
+matlab_folder = fileparts(experiment_folder);
+repository_folder = fileparts(matlab_folder);
+addpath(genpath(matlab_folder));
 
 config = weak_preconditioned_tucker_four_method_scaling_config();
-processedFolder = fullfile(repositoryFolder, 'experiments', 'processed');
-figureFolder = fullfile(repositoryFolder, 'experiments', 'figures');
-prefix = fullfile(processedFolder, config.outputPrefix);
+processed_folder = fullfile(repository_folder, 'experiments', 'processed');
+figure_folder = fullfile(repository_folder, 'experiments', 'figures');
+prefix = fullfile(processed_folder, config.outputPrefix);
 comparison = readtable(prefix + "_comparison_summary.csv", ...
     'TextType', 'string');
-trueResidualHistory = readtable( ...
+true_residual_history = readtable( ...
     prefix + "_true_residual_history.csv", 'TextType', 'string');
-rankHistory = readtable(prefix + "_rank_history.csv", ...
+rank_history = readtable(prefix + "_rank_history.csv", ...
     'TextType', 'string');
 
 colours = [ ...
@@ -23,307 +23,299 @@ colours = [ ...
     0.4660, 0.6740, 0.1880; ...
     0.4940, 0.1840, 0.5560];
 markers = {'o', 's', '^', 'd'};
-lineStyles = {'-', '--', '-.', ':'};
+line_styles = {'-', '--', '-.', ':'};
 
-residualFigure = figure('Visible', 'off', 'Color', 'w');
-residualLayout = tiledlayout(residualFigure, 1, ...
+residual_figure = figure('Visible', 'off', 'Color', 'w');
+residual_layout = tiledlayout(residual_figure, 1, ...
     numel(config.representativeN), 'TileSpacing', 'compact', ...
     'Padding', 'compact');
-residualAxes = gobjects(numel(config.representativeN), 1);
+residual_axes = gobjects(numel(config.representativeN), 1);
 
-residualMinimum = min(trueResidualHistory.true_relative_residual);
-residualMaximum = max(trueResidualHistory.true_relative_residual);
-residualLowerLimit = 0.8 * 10 ^ floor(log10(residualMinimum));
-residualUpperLimit = 1.2 * 10 ^ ceil(log10(residualMaximum));
+residual_minimum = min(true_residual_history.true_relative_residual);
+residual_maximum = max(true_residual_history.true_relative_residual);
+residual_lower_limit = 0.8 * 10 ^ floor(log10(residual_minimum));
+residual_upper_limit = 1.2 * 10 ^ ceil(log10(residual_maximum));
 
-for gridIndex = 1:numel(config.representativeN)
-    N = config.representativeN(gridIndex);
-    residualAxes(gridIndex) = nexttile(residualLayout);
-    hold(residualAxes(gridIndex), 'on');
+for grid_index = 1:numel(config.representativeN)
+    N = config.representativeN(grid_index);
+    residual_axes(grid_index) = nexttile(residual_layout);
+    hold(residual_axes(grid_index), 'on');
 
-    for methodIndex = 1:numel(config.methodIds)
-        methodId = config.methodIds(methodIndex);
-        [iteration, residual, minimumResidual, maximumResidual] = ...
+    for method_index = 1:numel(config.methodIds)
+        method_id = config.methodIds(method_index);
+        [iteration, residual, minimum_residual, maximum_residual] = ...
             summarise_true_residual_history( ...
-            trueResidualHistory, N, methodId, ...
+            true_residual_history, N, method_id, ...
             config.diagnosticCheckpoints);
 
-        if any(maximumResidual > minimumResidual)
-            plot_uncertainty_band(residualAxes(gridIndex), iteration, ...
-                minimumResidual, maximumResidual, ...
-                colours(methodIndex, :), 'FaceAlpha', 0.12);
+        if any(maximum_residual > minimum_residual)
+            plot_uncertainty_band(residual_axes(grid_index), iteration, ...
+                minimum_residual, maximum_residual, ...
+                colours(method_index, :), 'FaceAlpha', 0.12);
         end
 
-        plot(residualAxes(gridIndex), iteration, residual, ...
-            'Color', colours(methodIndex, :), ...
-            'LineStyle', lineStyles{methodIndex}, ...
-            'Marker', markers{methodIndex}, ...
+        plot(residual_axes(grid_index), iteration, residual, ...
+            'Color', colours(method_index, :), ...
+            'LineStyle', line_styles{method_index}, ...
+            'Marker', markers{method_index}, ...
             'LineWidth', 1.35, 'MarkerFaceColor', 'w', ...
-            'DisplayName', config.methodNames(methodIndex));
+            'DisplayName', config.methodNames(method_index));
     end
 
-    set(residualAxes(gridIndex), 'YScale', 'log');
-    grid(residualAxes(gridIndex), 'on');
-    box(residualAxes(gridIndex), 'off');
-    title(residualAxes(gridIndex), sprintf('$N=%d$', N), ...
+    set(residual_axes(grid_index), 'YScale', 'log');
+    grid(residual_axes(grid_index), 'on');
+    box(residual_axes(grid_index), 'off');
+    title(residual_axes(grid_index), sprintf('$N=%d$', N), ...
         'FontWeight', 'normal', 'Interpreter', 'latex');
-    xlabel(residualAxes(gridIndex), 'Arnoldi iteration $j$', ...
+    xlabel(residual_axes(grid_index), 'Arnoldi iteration $j$', ...
         'Interpreter', 'latex');
-    xlim(residualAxes(gridIndex), [0, config.maximumIterations]);
-    ylim(residualAxes(gridIndex), ...
-        [residualLowerLimit, residualUpperLimit]);
-    xticks(residualAxes(gridIndex), config.diagnosticCheckpoints);
-    residualAxes(gridIndex).FontSize = 8.5;
-    residualAxes(gridIndex).TickLabelInterpreter = 'latex';
-    residualAxes(gridIndex).TickDir = 'out';
-    residualAxes(gridIndex).LineWidth = 0.75;
-    residualAxes(gridIndex).GridAlpha = 0.12;
-    residualAxes(gridIndex).GridColor = [0.25, 0.25, 0.25];
+    xlim(residual_axes(grid_index), [0, config.maximumIterations]);
+    ylim(residual_axes(grid_index), ...
+        [residual_lower_limit, residual_upper_limit]);
+    xticks(residual_axes(grid_index), config.diagnosticCheckpoints);
+    residual_axes(grid_index).FontSize = 8.5;
+    residual_axes(grid_index).TickLabelInterpreter = 'latex';
+    residual_axes(grid_index).TickDir = 'out';
+    residual_axes(grid_index).LineWidth = 0.75;
+    residual_axes(grid_index).GridAlpha = 0.12;
+    residual_axes(grid_index).GridColor = [0.25, 0.25, 0.25];
 
-    if gridIndex == 1
-        ylabel(residualAxes(gridIndex), ...
+    if grid_index == 1
+        ylabel(residual_axes(grid_index), ...
             ['$\Vert \mathcal{B}_0-\mathcal{A}_0(\mathcal{X}_j)\Vert_F', ...
             '/\Vert \mathcal{B}_0\Vert_F$'], 'Interpreter', 'latex');
     end
 end
 
-residualLegend = legend(residualAxes(1), 'Orientation', 'horizontal', ...
+residual_legend = legend(residual_axes(1), 'Orientation', 'horizontal', ...
     'NumColumns', 2);
-residualLegend.Layout.Tile = 'south';
+residual_legend.Layout.Tile = 'south';
 
-apply_numerical_figure_style(residualFigure, ...
+apply_numerical_figure_style(residual_figure, ...
     'WidthCm', 15.8, 'HeightCm', 7.0);
 
-timeFigure = figure('Visible', 'off', 'Color', 'w');
-timeAxis = axes(timeFigure);
-hold(timeAxis, 'on');
+time_figure = figure('Visible', 'off', 'Color', 'w');
+time_axis = axes(time_figure);
+hold(time_axis, 'on');
 
-for methodIndex = 1:numel(config.methodIds)
-    methodId = config.methodIds(methodIndex);
-    rows = comparison.method_id == methodId;
-    methodData = sortrows(comparison(rows, :), 'N');
-    time = methodData.median_solver_time_sec;
-    timeLower = time - methodData.minimum_solver_time_sec;
-    timeUpper = methodData.maximum_solver_time_sec - time;
-    errorbar(timeAxis, methodData.N, time, timeLower, timeUpper, ...
-        'Color', colours(methodIndex, :), ...
-        'LineStyle', lineStyles{methodIndex}, ...
-        'Marker', markers{methodIndex}, 'LineWidth', 1.35, ...
+for method_index = 1:numel(config.methodIds)
+    method_id = config.methodIds(method_index);
+    rows = comparison.method_id == method_id;
+    method_data = sortrows(comparison(rows, :), 'N');
+    time = method_data.median_solver_time_sec;
+    time_lower = time - method_data.minimum_solver_time_sec;
+    time_upper = method_data.maximum_solver_time_sec - time;
+    errorbar(time_axis, method_data.N, time, time_lower, time_upper, ...
+        'Color', colours(method_index, :), ...
+        'LineStyle', line_styles{method_index}, ...
+        'Marker', markers{method_index}, 'LineWidth', 1.35, ...
         'MarkerFaceColor', 'w', 'DisplayName', ...
-        config.methodNames(methodIndex));
+        config.methodNames(method_index));
 end
 
-set(timeAxis, 'YScale', 'log');
-format_axis(timeAxis, 'Mode size $N$', ...
+set(time_axis, 'YScale', 'log');
+format_axis(time_axis, 'Mode size $N$', ...
     'Solver time for 100 Arnoldi products (s)', '');
-legend(timeAxis, 'Location', 'best', 'NumColumns', 2);
-apply_thesis_style(timeFigure, 15.8, 8.2);
+legend(time_axis, 'Location', 'best', 'NumColumns', 2);
+apply_thesis_style(time_figure, 15.8, 8.2);
 
-rankFigure = figure('Visible', 'off', 'Color', 'w');
-rankLayout = tiledlayout(rankFigure, 1, numel(config.representativeN), ...
+rank_figure = figure('Visible', 'off', 'Color', 'w');
+rank_layout = tiledlayout(rank_figure, 1, numel(config.representativeN), ...
     'TileSpacing', 'compact', 'Padding', 'compact');
-rankAxes = gobjects(numel(config.representativeN), 1);
-maximumRank = max(rankHistory.maximum_mode_rank);
-rankUpperLimit = 20 * ceil(maximumRank / 20);
+rank_axes = gobjects(numel(config.representativeN), 1);
+max_rank_value = max(rank_history.maximum_mode_rank);
+rank_upper_limit = 20 * ceil(max_rank_value / 20);
 
-for gridIndex = 1:numel(config.representativeN)
-    N = config.representativeN(gridIndex);
-    rankAxes(gridIndex) = nexttile(rankLayout);
-    hold(rankAxes(gridIndex), 'on');
+for grid_index = 1:numel(config.representativeN)
+    N = config.representativeN(grid_index);
+    rank_axes(grid_index) = nexttile(rank_layout);
+    hold(rank_axes(grid_index), 'on');
 
-    for methodIndex = 1:numel(config.methodIds)
-        methodId = config.methodIds(methodIndex);
-        [iteration, medianRank, minimumRank, maximumRankByIteration] = ...
-            summarise_rank_history(rankHistory, N, methodId, ...
+    for method_index = 1:numel(config.methodIds)
+        method_id = config.methodIds(method_index);
+        [iteration, median_rank, minimum_rank, maximum_rank_by_iteration] = ...
+            summarise_rank_history(rank_history, N, method_id, ...
             config.maximumIterations);
 
-        if any(maximumRankByIteration > minimumRank)
-            plot_uncertainty_band(rankAxes(gridIndex), iteration, ...
-                minimumRank, maximumRankByIteration, ...
-                colours(methodIndex, :), 'FaceAlpha', 0.12);
+        if any(maximum_rank_by_iteration > minimum_rank)
+            plot_uncertainty_band(rank_axes(grid_index), iteration, ...
+                minimum_rank, maximum_rank_by_iteration, ...
+                colours(method_index, :), 'FaceAlpha', 0.12);
         end
 
-        markerIndices = unique([1, 11:10:numel(iteration), ...
+        marker_indices = unique([1, 11:10:numel(iteration), ...
             numel(iteration)]);
-        plot(rankAxes(gridIndex), iteration, medianRank, ...
-            'Color', colours(methodIndex, :), ...
-            'LineStyle', lineStyles{methodIndex}, ...
-            'Marker', markers{methodIndex}, ...
-            'MarkerIndices', markerIndices, ...
+        plot(rank_axes(grid_index), iteration, median_rank, ...
+            'Color', colours(method_index, :), ...
+            'LineStyle', line_styles{method_index}, ...
+            'Marker', markers{method_index}, ...
+            'MarkerIndices', marker_indices, ...
             'LineWidth', 1.35, 'MarkerFaceColor', 'w', ...
-            'DisplayName', config.methodNames(methodIndex));
+            'DisplayName', config.methodNames(method_index));
     end
 
-    xlabel(rankAxes(gridIndex), 'Arnoldi iteration $j$', ...
+    xlabel(rank_axes(grid_index), 'Arnoldi iteration $j$', ...
         'Interpreter', 'latex');
-    title(rankAxes(gridIndex), sprintf('$N=%d$', N), ...
+    title(rank_axes(grid_index), sprintf('$N=%d$', N), ...
         'FontWeight', 'normal', 'Interpreter', 'latex');
-    xlim(rankAxes(gridIndex), [0, config.maximumIterations]);
-    ylim(rankAxes(gridIndex), [0, rankUpperLimit]);
-    xticks(rankAxes(gridIndex), 0:20:config.maximumIterations);
-    yticks(rankAxes(gridIndex), 0:20:rankUpperLimit);
+    xlim(rank_axes(grid_index), [0, config.maximumIterations]);
+    ylim(rank_axes(grid_index), [0, rank_upper_limit]);
+    xticks(rank_axes(grid_index), 0:20:config.maximumIterations);
+    yticks(rank_axes(grid_index), 0:20:rank_upper_limit);
 
-    if gridIndex == 1
-        ylabel(rankAxes(gridIndex), 'Maximum Tucker basis rank', ...
+    if grid_index == 1
+        ylabel(rank_axes(grid_index), 'Maximum Tucker basis rank', ...
             'Interpreter', 'latex');
     end
 end
 
-rankLegend = legend(rankAxes(1), 'Orientation', 'horizontal', ...
+rank_legend = legend(rank_axes(1), 'Orientation', 'horizontal', ...
     'NumColumns', 2);
-rankLegend.Layout.Tile = 'south';
+rank_legend.Layout.Tile = 'south';
 
-apply_numerical_figure_style(rankFigure, ...
+apply_numerical_figure_style(rank_figure, ...
     'WidthCm', 15.8, 'HeightCm', 7.0);
 
-residualStem = fullfile(figureFolder, ...
+residual_stem = fullfile(figure_folder, ...
     config.outputPrefix + "_true_residual_history");
-solverTimeStem = fullfile(figureFolder, ...
+solver_time_stem = fullfile(figure_folder, ...
     config.outputPrefix + "_solver_time_scaling");
-maximumRankStem = fullfile(figureFolder, ...
+maximum_rank_stem = fullfile(figure_folder, ...
     config.outputPrefix + "_maximum_rank_history");
-export_numerical_figure(residualFigure, residualStem, ...
+export_numerical_figure(residual_figure, residual_stem, ...
     'WritePNG', true, 'WriteFIG', true);
-export_numerical_figure(timeFigure, solverTimeStem, ...
+export_numerical_figure(time_figure, solver_time_stem, ...
     'WritePNG', true, 'WriteFIG', true);
-export_numerical_figure(rankFigure, maximumRankStem, ...
+export_numerical_figure(rank_figure, maximum_rank_stem, ...
     'WritePNG', true, 'WriteFIG', true);
-close(residualFigure);
-close(timeFigure);
-close(rankFigure);
+close(residual_figure);
+close(time_figure);
+close(rank_figure);
 
-fprintf('Saved %s.pdf and %s.png\n', residualStem, residualStem);
-fprintf('Saved %s.pdf and %s.png\n', solverTimeStem, solverTimeStem);
-fprintf('Saved %s.pdf and %s.png\n', maximumRankStem, maximumRankStem);
+fprintf('Saved %s.pdf and %s.png\n', residual_stem, residual_stem);
+fprintf('Saved %s.pdf and %s.png\n', solver_time_stem, solver_time_stem);
+fprintf('Saved %s.pdf and %s.png\n', maximum_rank_stem, maximum_rank_stem);
 
 end
 
-
-function [iteration, medianResidual, minimumResidual, maximumResidual] = ...
+function [iteration, median_residual, minimum_residual, maximum_residual] = ...
     summarise_true_residual_history( ...
-    residualHistory, N, methodId, diagnosticCheckpoints)
+    residual_history, N, method_id, diagnostic_checkpoints)
 
-methodRows = residualHistory( ...
-    residualHistory.N == N & residualHistory.method_id == methodId, :);
-assert(~isempty(methodRows), ...
+method_rows = residual_history( ...
+    residual_history.N == N & residual_history.method_id == method_id, :);
+assert(~isempty(method_rows), ...
     'The residual history is missing for N=%d and method %s.', ...
-    N, methodId);
+    N, method_id);
 
-seedValues = unique(methodRows.residual_seed);
-if all(isnan(seedValues))
-    seedValues = NaN;
+seed_values = unique(method_rows.residual_seed);
+if all(isnan(seed_values))
+    seed_values = NaN;
 end
 
-iteration = diagnosticCheckpoints(:);
-runHistories = NaN(numel(iteration), numel(seedValues));
-for seedIndex = 1:numel(seedValues)
-    seed = seedValues(seedIndex);
+iteration = diagnostic_checkpoints(:);
+run_histories = NaN(numel(iteration), numel(seed_values));
+for seed_index = 1:numel(seed_values)
+    seed = seed_values(seed_index);
     if isnan(seed)
-        seedRows = methodRows(isnan(methodRows.residual_seed), :);
+        seed_rows = method_rows(isnan(method_rows.residual_seed), :);
     else
-        seedRows = methodRows(methodRows.residual_seed == seed, :);
+        seed_rows = method_rows(method_rows.residual_seed == seed, :);
     end
-    seedRows = sortrows(seedRows, 'arnoldi_iteration');
-    assert(isequal(seedRows.arnoldi_iteration, iteration), ...
+    seed_rows = sortrows(seed_rows, 'arnoldi_iteration');
+    assert(isequal(seed_rows.arnoldi_iteration, iteration), ...
         'A residual history has incomplete checkpoints.');
-    runHistories(:, seedIndex) = seedRows.true_relative_residual;
+    run_histories(:, seed_index) = seed_rows.true_relative_residual;
 end
 
-assert(all(isfinite(runHistories) & runHistories > 0, 'all'), ...
+assert(all(isfinite(run_histories) & run_histories > 0, 'all'), ...
     'The completed residual history contains an invalid value.');
-medianResidual = median(runHistories, 2);
-minimumResidual = min(runHistories, [], 2);
-maximumResidual = max(runHistories, [], 2);
+median_residual = median(run_histories, 2);
+minimum_residual = min(run_histories, [], 2);
+maximum_residual = max(run_histories, [], 2);
 
 end
 
+function [iteration, median_rank, minimum_rank, max_rank_value] = ...
+    summarise_rank_history(rank_history, N, method_id, maxit)
 
-function [iteration, medianRank, minimumRank, maximumRank] = ...
-    summarise_rank_history(rankHistory, N, methodId, maximumIteration)
+method_rows = rank_history( ...
+    rank_history.N == N & rank_history.method_id == method_id, :);
+assert(~isempty(method_rows), ...
+    'The rank history is missing for N=%d and method %s.', N, method_id);
 
-methodRows = rankHistory( ...
-    rankHistory.N == N & rankHistory.method_id == methodId, :);
-assert(~isempty(methodRows), ...
-    'The rank history is missing for N=%d and method %s.', N, methodId);
-
-seedValues = unique(methodRows.residual_seed);
-if all(isnan(seedValues))
-    seedValues = NaN;
+seed_values = unique(method_rows.residual_seed);
+if all(isnan(seed_values))
+    seed_values = NaN;
 end
 
-iteration = (0:maximumIteration).';
-runHistories = NaN(numel(iteration), numel(seedValues));
+iteration = (0:maxit).';
+run_histories = NaN(numel(iteration), numel(seed_values));
 
-for seedIndex = 1:numel(seedValues)
-    seed = seedValues(seedIndex);
+for seed_index = 1:numel(seed_values)
+    seed = seed_values(seed_index);
     if isnan(seed)
-        seedRows = methodRows(isnan(methodRows.residual_seed), :);
+        seed_rows = method_rows(isnan(method_rows.residual_seed), :);
     else
-        seedRows = methodRows(methodRows.residual_seed == seed, :);
+        seed_rows = method_rows(method_rows.residual_seed == seed, :);
     end
-    seedRows = sortrows(seedRows, 'basis_index');
+    seed_rows = sortrows(seed_rows, 'basis_index');
 
-    basisIteration = seedRows.basis_index - 1;
-    runningMaximum = cummax(seedRows.maximum_mode_rank);
-    nextHistory = NaN(size(iteration));
-    nextHistory(basisIteration + 1) = runningMaximum;
+    basis_iteration = seed_rows.basis_index - 1;
+    running_maximum = cummax(seed_rows.maximum_mode_rank);
+    next_history = NaN(size(iteration));
+    next_history(basis_iteration + 1) = running_maximum;
 
-    % Tucker sGMRES does not form an unused next basis tensor after the
-    % final operator product. Carry forward the running maximum so that the
-    % value at the final iteration still means the largest rank among all
-    % basis tensors formed by that point.
-    for iterationIndex = 2:numel(iteration)
-        if isnan(nextHistory(iterationIndex))
-            nextHistory(iterationIndex) = nextHistory(iterationIndex - 1);
+    for iteration_index = 2:numel(iteration)
+        if isnan(next_history(iteration_index))
+            next_history(iteration_index) = next_history(iteration_index - 1);
         end
     end
-    runHistories(:, seedIndex) = nextHistory;
+    run_histories(:, seed_index) = next_history;
 end
 
-assert(all(isfinite(runHistories), 'all'), ...
+assert(all(isfinite(run_histories), 'all'), ...
     'The completed rank history contains a missing value.');
-medianRank = median(runHistories, 2);
-minimumRank = min(runHistories, [], 2);
-maximumRank = max(runHistories, [], 2);
+median_rank = median(run_histories, 2);
+minimum_rank = min(run_histories, [], 2);
+max_rank_value = max(run_histories, [], 2);
 
 end
 
+function format_axis(axis_handle, x_label, y_label, title_text)
 
-function format_axis(axisHandle, xLabel, yLabel, titleText)
-
-grid(axisHandle, 'on');
-box(axisHandle, 'off');
-xlabel(axisHandle, xLabel, 'Interpreter', 'latex');
-ylabel(axisHandle, yLabel, 'Interpreter', 'latex');
-if strlength(string(titleText)) > 0
-    title(axisHandle, titleText, 'FontWeight', 'normal', ...
+grid(axis_handle, 'on');
+box(axis_handle, 'off');
+xlabel(axis_handle, x_label, 'Interpreter', 'latex');
+ylabel(axis_handle, y_label, 'Interpreter', 'latex');
+if strlength(string(title_text)) > 0
+    title(axis_handle, title_text, 'FontWeight', 'normal', ...
         'Interpreter', 'latex');
 end
-axisHandle.FontSize = 8.5;
-axisHandle.TickLabelInterpreter = 'latex';
-axisHandle.TickDir = 'out';
-axisHandle.LineWidth = 0.75;
-axisHandle.GridAlpha = 0.12;
-axisHandle.GridColor = [0.25, 0.25, 0.25];
-axisHandle.XTick = [150, 200, 250];
-xlim(axisHandle, [140, 260]);
+axis_handle.FontSize = 8.5;
+axis_handle.TickLabelInterpreter = 'latex';
+axis_handle.TickDir = 'out';
+axis_handle.LineWidth = 0.75;
+axis_handle.GridAlpha = 0.12;
+axis_handle.GridColor = [0.25, 0.25, 0.25];
+axis_handle.XTick = [150, 200, 250];
+xlim(axis_handle, [140, 260]);
 
 end
 
+function apply_thesis_style(figure_handle, width_cm, height_cm)
 
-function apply_thesis_style(figureHandle, widthCm, heightCm)
+figure_handle.Units = 'centimeters';
+figure_handle.Position = [2, 2, width_cm, height_cm];
+figure_handle.PaperUnits = 'centimeters';
+figure_handle.PaperPositionMode = 'auto';
+figure_handle.Renderer = 'painters';
 
-figureHandle.Units = 'centimeters';
-figureHandle.Position = [2, 2, widthCm, heightCm];
-figureHandle.PaperUnits = 'centimeters';
-figureHandle.PaperPositionMode = 'auto';
-figureHandle.Renderer = 'painters';
-
-legendHandles = findall(figureHandle, 'Type', 'legend');
-for legendHandle = reshape(legendHandles, 1, [])
-    legendHandle.Interpreter = 'latex';
-    legendHandle.FontSize = 7.8;
-    legendHandle.Box = 'off';
+legend_handles = findall(figure_handle, 'Type', 'legend');
+for legend_handle = reshape(legend_handles, 1, [])
+    legend_handle.Interpreter = 'latex';
+    legend_handle.FontSize = 7.8;
+    legend_handle.Box = 'off';
 end
 
 end

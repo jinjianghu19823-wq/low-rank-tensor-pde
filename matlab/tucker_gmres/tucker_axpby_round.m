@@ -1,60 +1,7 @@
-function [Z, info] = tucker_axpby_round(X, alpha, Y, beta, compressionTolerance, maximumMultilinearRank)
+function [Z, info] = tucker_axpby_round(X, alpha, Y, beta, eta, max_rank)
 %TUCKER_AXPBY_ROUND Add two Tucker tensors and recompress the result.
-%
-% This function calculates
-%
-%     Z = round(alpha * X + beta * Y).
-%
-% The name AXPBY comes from the familiar vector operation
-%
-%     alpha * x + beta * y.
-%
-% Inputs:
-%   X, Y
-%       Tucker tensors stored as Tensor Toolbox ttensor objects.
-%
-%   alpha, beta
-%       Scalar coefficients multiplying X and Y.
-%
-%   compressionTolerance
-%       Requested relative STHOSVD recompression tolerance.
-%
-%   maximumMultilinearRank (optional)
-%       Scalar or mode-wise hard rank cap. Use [] for no additional cap.
-%
-% Output:
-%   Z
-%       The recompressed Tucker tensor.
-%
-%   info
-%       Recompression diagnostics, including whether the rank cap was
-%       active.
-%
-% The full tensors are never formed. The exact Tucker sum is first written
-% with joined factor matrices and a block core. QR factorisations then make
-% the joined factor matrices orthonormal. Finally, STHOSVD is applied only
-% to the much smaller transformed core. Tensor Toolbox exposes this method
-% through its HOSVD function with the sequential option enabled.
-%
-% Thesis notation (Section 5.5 and Algorithm Tucker AXPBY):
-%   X, Y, Z                    <->  \mathcal X, \mathcal Y, \mathcal Z
-%   alpha                      <->  \alpha
-%   beta                       <->  \gamma (the AXPBY coefficient)
-%   compressionTolerance       <->  \eta
-%   maximumMultilinearRank     <->  \boldsymbol R=(R_1,...,R_d)
-%   combinedCore               <->  \widehat{\mathcal G}
-%   combinedFactors{mode}      <->  \widehat U^(n)
-%   orthogonalFactors{mode}    <->  Q^(n)
-%   orthogonalCore             <->  \mathcal G_Q=\mathcal C^(0)
-%   compressedCoreTensor.u{n}  <->  P^(n)
-%   finalFactors{n}            <->  U_Z^(n)=Q^(n)P^(n)
-% Here beta is an AXPBY coefficient; it is not the GMRES quantity
-% \beta=||\widetilde r_0||.
 
-callTimer = tic;
-
-
-%% 1. Check the inputs
+call_timer = tic;
 
 if ~isa(X, 'ttensor') || ~isa(Y, 'ttensor')
     error('X and Y must both be Tensor Toolbox ttensor objects.');
@@ -68,180 +15,139 @@ if ~isscalar(alpha) || ~isscalar(beta)
     error('alpha and beta must be scalar numbers.');
 end
 
-if compressionTolerance <= 0 || compressionTolerance >= 1
-    error('compressionTolerance must be between 0 and 1.');
+if eta <= 0 || eta >= 1
+    error('eta must be between 0 and 1.');
 end
 
 if nargin < 6
-    maximumMultilinearRank = [];
+    max_rank = [];
 end
 
-maximumRanks = normalise_tucker_rank_cap(maximumMultilinearRank, size(X));
+max_ranks = normalise_tucker_rank_cap(max_rank, size(X));
 
+d = ndims(X);
 
-%% 2. Read the Tucker ranks
+rank_x = size(X.core);
+rank_y = size(Y.core);
 
-numberOfModes = ndims(X);
+combined_core_size = rank_x + rank_y;
 
-rankX = size(X.core);
-rankY = size(Y.core);
+component_timer = tic;
 
-% Adding Tucker tensors joins their mode subspaces. Before recompression,
-% the new rank in each mode is the sum of the two old ranks.
-combinedCoreSize = rankX + rankY;
+core_values = zeros(combined_core_size);
 
+index_x = cell(d, 1);
+index_y = cell(d, 1);
 
-%% 3. Build the exact block core of alpha*X + beta*Y
+for mode = 1:d
 
-componentTimer = tic;
+    index_x{mode} = 1:rank_x(mode);
 
-% Start with a core filled with zeros.
-combinedCoreValues = zeros(combinedCoreSize);
-
-% These cell arrays describe the two diagonal blocks of the new core.
-indexX = cell(numberOfModes, 1);
-indexY = cell(numberOfModes, 1);
-
-for mode = 1:numberOfModes
-
-    % The first block stores the core of X.
-    indexX{mode} = 1:rankX(mode);
-
-    % The second block stores the core of Y.
-    indexY{mode} = rankX(mode) + (1:rankY(mode));
+    index_y{mode} = rank_x(mode) + (1:rank_y(mode));
 
 end
 
-% Place alpha times the core of X in the first block.
-combinedCoreValues(indexX{:}) = alpha * double(X.core);
+core_values(index_x{:}) = alpha * double(X.core);
 
-% Place beta times the core of Y in the second block.
-combinedCoreValues(indexY{:}) = beta * double(Y.core);
+core_values(index_y{:}) = beta * double(Y.core);
 
-combinedCore = tensor(combinedCoreValues);
-exactSumCoreTime = toc(componentTimer);
+combined_core = tensor(core_values);
+exact_sum_core_time = toc(component_timer);
 
+component_timer = tic;
+combined_factors = cell(d, 1);
 
-%% 4. Join the factor matrices
+for mode = 1:d
 
-componentTimer = tic;
-combinedFactors = cell(numberOfModes, 1);
-
-for mode = 1:numberOfModes
-
-    % Horizontal concatenation joins the two mode subspaces:
-    %
-    %     [U_X^(mode), U_Y^(mode)].
-    combinedFactors{mode} = [X.u{mode}, Y.u{mode}];
+    combined_factors{mode} = [X.u{mode}, Y.u{mode}];
 
 end
 
-factorConcatenationTime = toc(componentTimer);
+factor_concatenation_time = toc(component_timer);
 
+% Orthonormalise the joined factor matrices
 
-%% 5. Orthonormalise the joined factor matrices
+factors = cell(d, 1);
+core = combined_core;
+factor_qr_time = 0;
+core_transform_time = 0;
 
-orthogonalFactors = cell(numberOfModes, 1);
-orthogonalCore = combinedCore;
-factorQrTime = 0;
-coreTransformTime = 0;
+for mode = 1:d
 
-for mode = 1:numberOfModes
+    component_timer = tic;
+    [Q, R] = qr(combined_factors{mode}, 0);
+    factor_qr_time = factor_qr_time + toc(component_timer);
 
-    % Thin QR gives
-    %
-    %     combinedFactors{mode} = Q * R.
-    componentTimer = tic;
-    [Q, R] = qr(combinedFactors{mode}, 0);
-    factorQrTime = factorQrTime + toc(componentTimer);
+    factors{mode} = Q;
 
-    orthogonalFactors{mode} = Q;
-
-    % The R factor must be absorbed into the core so that the represented
-    % full tensor does not change.
-    componentTimer = tic;
-    orthogonalCore = ttm(orthogonalCore, R, mode);
-    coreTransformTime = coreTransformTime + toc(componentTimer);
+    component_timer = tic;
+    core = ttm(core, R, mode);
+    core_transform_time = core_transform_time + toc(component_timer);
 
 end
 
+size_before_cancellation = abs(alpha) * norm(X) + abs(beta) * norm(Y);
 
-%% 6. Handle an exact or nearly exact cancellation
+size_after_cancellation = norm(core);
 
-sizeBeforeCancellation = abs(alpha) * norm(X) + abs(beta) * norm(Y);
+if size_after_cancellation <= 100 * eps * size_before_cancellation
 
-sizeAfterCancellation = norm(orthogonalCore);
-
-if sizeAfterCancellation <= 100 * eps * sizeBeforeCancellation
-
-    % For example, X - X is the zero tensor. Multiplying X by zero keeps a
-    % valid ttensor representation without constructing a full zero array.
     Z = 0 * X;
 
-    info.requested_tolerance = compressionTolerance;
-    info.maximum_ranks = maximumRanks;
+    info.requested_tolerance = eta;
+    info.maximum_ranks = max_ranks;
     info.tolerance_ranks = size(X.core);
     info.retained_ranks = size(X.core);
     info.relative_error_estimate = 0;
-    info.rank_cap_active_by_mode = false(1, numberOfModes);
+    info.rank_cap_active_by_mode = false(1, d);
     info.rank_cap_active = false;
     info.zero_result = true;
-    kernelTiming = empty_tucker_kernel_timing();
-    kernelTiming.exact_sum_core_time_sec = exactSumCoreTime;
-    kernelTiming.factor_concatenation_time_sec = ...
-        factorConcatenationTime;
-    kernelTiming.factor_qr_time_sec = factorQrTime;
-    kernelTiming.core_transform_time_sec = coreTransformTime;
-    info.kernel_timing = kernelTiming;
-    info.call_time_sec = toc(callTimer);
+    kernel_timing = empty_tucker_kernel_timing();
+    kernel_timing.exact_sum_core_time_sec = exact_sum_core_time;
+    kernel_timing.factor_concatenation_time_sec = ...
+        factor_concatenation_time;
+    kernel_timing.factor_qr_time_sec = factor_qr_time;
+    kernel_timing.core_transform_time_sec = core_transform_time;
+    info.kernel_timing = kernel_timing;
+    info.call_time_sec = toc(call_timer);
     return
 
 end
 
+% Compress the small orthogonal core with STHOSVD
 
-%% 7. Compress the small orthogonal core with STHOSVD
+[compressed_core_tensor, core_info] = sthosvd_round_tensor(core, eta, max_ranks, 1:d);
 
-[compressedCoreTensor, coreInfo] = sthosvd_round_tensor(orthogonalCore, compressionTolerance, maximumRanks, 1:numberOfModes);
+final_factors = cell(d, 1);
+factor_reconstruction_time = 0;
 
+for mode = 1:d
 
-%% 8. Combine the two levels of factor matrices
-
-finalFactors = cell(numberOfModes, 1);
-factorReconstructionTime = 0;
-
-for mode = 1:numberOfModes
-
-    % STHOSVD supplies a small factor matrix for the transformed core. It is
-    % multiplied by the earlier QR factor to obtain a factor matrix in the
-    % original tensor space.
-    componentTimer = tic;
-    finalFactors{mode} = orthogonalFactors{mode} * compressedCoreTensor.u{mode};
-    factorReconstructionTime = ...
-        factorReconstructionTime + toc(componentTimer);
+    component_timer = tic;
+    final_factors{mode} = factors{mode} * compressed_core_tensor.u{mode};
+    factor_reconstruction_time = ...
+        factor_reconstruction_time + toc(component_timer);
 
 end
 
+Z = ttensor(compressed_core_tensor.core, final_factors);
 
-%% 9. Return the final Tucker tensor
-
-Z = ttensor(compressedCoreTensor.core, finalFactors);
-
-info = coreInfo;
+info = core_info;
 info.zero_result = false;
 
-kernelTiming = coreInfo.kernel_timing;
-kernelTiming.exact_sum_core_time_sec = ...
-    kernelTiming.exact_sum_core_time_sec + exactSumCoreTime;
-kernelTiming.factor_concatenation_time_sec = ...
-    kernelTiming.factor_concatenation_time_sec + factorConcatenationTime;
-kernelTiming.factor_qr_time_sec = ...
-    kernelTiming.factor_qr_time_sec + factorQrTime;
-kernelTiming.core_transform_time_sec = ...
-    kernelTiming.core_transform_time_sec + coreTransformTime;
-kernelTiming.factor_reconstruction_time_sec = ...
-    kernelTiming.factor_reconstruction_time_sec + factorReconstructionTime;
+kernel_timing = core_info.kernel_timing;
+kernel_timing.exact_sum_core_time_sec = ...
+    kernel_timing.exact_sum_core_time_sec + exact_sum_core_time;
+kernel_timing.factor_concatenation_time_sec = ...
+    kernel_timing.factor_concatenation_time_sec + factor_concatenation_time;
+kernel_timing.factor_qr_time_sec = ...
+    kernel_timing.factor_qr_time_sec + factor_qr_time;
+kernel_timing.core_transform_time_sec = ...
+    kernel_timing.core_transform_time_sec + core_transform_time;
+kernel_timing.factor_reconstruction_time_sec = ...
+    kernel_timing.factor_reconstruction_time_sec + factor_reconstruction_time;
 
-info.kernel_timing = kernelTiming;
-info.call_time_sec = toc(callTimer);
+info.kernel_timing = kernel_timing;
+info.call_time_sec = toc(call_timer);
 
 end

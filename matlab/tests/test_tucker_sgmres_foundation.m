@@ -1,129 +1,122 @@
 function test_tucker_sgmres_foundation
 %TEST_TUCKER_SGMRES_FOUNDATION Validate the structured residual sketch.
-%
-% This correctness test forms the otherwise implicit full sketch on a tiny
-% tensor. It checks the vectorisation order, Tucker contraction, linearity,
-% and reproducibility. It is not a performance experiment.
 
 add_toolboxes();
 rng(17, 'twister');
 
-tensorDimensions = [3, 4, 2];
-sketchSize = 11;
-randomSeed = 29;
+n = [3, 4, 2];
+sketch_size = 11;
+seed = 29;
 
-Xfull = tensor(randn(tensorDimensions));
-Yfull = tensor(randn(tensorDimensions));
+Xfull = tensor(randn(n));
+Yfull = tensor(randn(n));
 X = hosvd(Xfull, 1e-13, 'verbosity', 0);
 Y = hosvd(Yfull, 1e-13, 'verbosity', 0);
 
 sketch = create_tucker_row_khatri_rao_sketch( ...
-    tensorDimensions, sketchSize, randomSeed);
-sameSketch = create_tucker_row_khatri_rao_sketch( ...
-    tensorDimensions, sketchSize, randomSeed);
+    n, sketch_size, seed);
+same_sketch = create_tucker_row_khatri_rao_sketch( ...
+    n, sketch_size, seed);
 
-for mode = 1:numel(tensorDimensions)
-    assert(isequal(sketch.factors{mode}, sameSketch.factors{mode}), ...
+for mode = 1:numel(n)
+    assert(isequal(sketch.factors{mode}, same_sketch.factors{mode}), ...
         'The same seed did not reproduce the sketch factors.');
 end
 
-explicitMatrix = form_explicit_sketch_matrix(sketch);
+explicit_matrix = form_explicit_sketch_matrix(sketch);
 Xvalues = double(full(X));
-explicitValues = explicitMatrix * Xvalues(:);
-implicitValues = apply_tucker_row_khatri_rao_sketch(X, sketch);
-relativeApplicationError = ...
-    norm(implicitValues - explicitValues) / norm(explicitValues);
+explicit_values = explicit_matrix * Xvalues(:);
+implicit_values = apply_tucker_row_khatri_rao_sketch(X, sketch);
+relative_application_error = ...
+    norm(implicit_values - explicit_values) / norm(explicit_values);
 
-assert(relativeApplicationError < 1e-12, ...
+assert(relative_application_error < 1e-12, ...
     'The implicit Tucker sketch does not match S*vec(X).');
 
 alpha = 1.7;
 beta = -0.4;
 Z = tucker_axpby_exact(X, alpha, Y, beta);
-sketchZ = apply_tucker_row_khatri_rao_sketch(Z, sketch);
-linearCombination = alpha * ...
+sketch_z = apply_tucker_row_khatri_rao_sketch(Z, sketch);
+linear_combination = alpha * ...
     apply_tucker_row_khatri_rao_sketch(X, sketch) + beta * ...
     apply_tucker_row_khatri_rao_sketch(Y, sketch);
-relativeLinearityError = ...
-    norm(sketchZ - linearCombination) / norm(linearCombination);
+relative_linearity_error = ...
+    norm(sketch_z - linear_combination) / norm(linear_combination);
 
-assert(relativeLinearityError < 1e-12, ...
+assert(relative_linearity_error < 1e-12, ...
     'The Tucker sketch failed its linearity check.');
 
 fprintf('\nTucker sGMRES sketch foundation test\n');
 fprintf('Explicit application relative error  %.3e\n', ...
-    relativeApplicationError);
+    relative_application_error);
 fprintf('Linearity relative error             %.3e\n', ...
-    relativeLinearityError);
+    relative_linearity_error);
 
-% A small end to end smoke test checks that the plain solver completes its
-% declared work and reduces an independently evaluated Poisson residual.
 N = 6;
 h = 1 / (N + 1);
-onesVector = ones(N, 1);
+e = ones(N, 1);
 A1 = spdiags( ...
-    [-onesVector, 2 * onesVector, -onesVector], -1:1, N, N) / h^2;
-gridPoints = (1:N).' / (N + 1);
-gaussianVector = exp(-10 * (gridPoints - 1/2).^2);
+    [-e, 2 * e, -e], -1:1, N, N) / h^2;
+grid_points = (1:N).' / (N + 1);
+g = exp(-10 * (grid_points - 1/2).^2);
 F = ttensor(tensor(1, [1, 1, 1]), ...
-    {gaussianVector, gaussianVector, gaussianVector});
+    {g, g, g});
 U0 = 0 * F;
-normF = norm(F);
-operatorTermsFunction = @(U) poisson_action_tucker_terms(U, A1);
-originalResidualFunction = @(U) ...
+norm_f = norm(F);
+A_terms = @(U) poisson_action_tucker_terms(U, A1);
+original_residual_function = @(U) ...
     true_residual_tucker_poisson(U, F, A1);
-identityResidualNormFunction = @(U) ...
-    normF * true_residual_tucker_poisson(U, F, A1);
-solverSketch = create_tucker_row_khatri_rao_sketch( ...
+identity_residual_norm_function = @(U) ...
+    norm_f * true_residual_tucker_poisson(U, F, A1);
+solver_sketch = create_tucker_row_khatri_rao_sketch( ...
     [N, N, N], 20, 101);
 
-[~, solverInfo] = tucker_sgmres_left_preconditioned_plain( ...
-    operatorTermsFunction, @identity_tucker_fixed_linear_preconditioner, ...
+[~, solver_info] = tucker_sgmres_left_preconditioned_plain( ...
+    A_terms, @identity_tucker_fixed_linear_preconditioner, ...
     F, U0, ...
-    4, solverSketch, 1e-14, 2, 1e-10, 1e-10, ...
-    originalResidualFunction, identityResidualNormFunction, ...
+    4, solver_sketch, 1e-14, 2, 1e-10, 1e-10, ...
+    original_residual_function, identity_residual_norm_function, ...
     false, Inf, [N, N, N], [2; 4]);
 
-assert(solverInfo.iterations == 4, ...
+assert(solver_info.iterations == 4, ...
     'The plain Tucker sGMRES smoke test ended before four steps.');
-assert(solverInfo.stop_reason == "iteration_limit", ...
+assert(solver_info.stop_reason == "iteration_limit", ...
     'The plain Tucker sGMRES smoke test stopped unexpectedly.');
-assert(isfinite(solverInfo.true_relative_residual(end)), ...
+assert(isfinite(solver_info.true_relative_residual(end)), ...
     'The independently evaluated final residual is not finite.');
-assert(solverInfo.true_relative_residual(end) < ...
-    solverInfo.true_relative_residual(1), ...
+assert(solver_info.true_relative_residual(end) < ...
+    solver_info.true_relative_residual(1), ...
     'The independently evaluated residual did not decrease.');
-assert(~solverInfo.rank_cap_active, ...
+assert(~solver_info.rank_cap_active, ...
     'The rank cap should not be active in the smoke test.');
-assert(isequal(solverInfo.true_residual_iteration, [0; 2; 4]), ...
+assert(isequal(solver_info.true_residual_iteration, [0; 2; 4]), ...
     'The requested true-residual checkpoints were not recorded.');
-assert(numel(solverInfo.true_relative_residual) == 3 && ...
-    all(isfinite(solverInfo.true_relative_residual)), ...
+assert(numel(solver_info.true_relative_residual) == 3 && ...
+    all(isfinite(solver_info.true_relative_residual)), ...
     'The checkpoint true-residual history is incomplete.');
 
 fprintf('Four step solver true residual       %.3e\n', ...
-    solverInfo.true_relative_residual(end));
+    solver_info.true_relative_residual(end));
 fprintf('Four step sketch residual            %.3e\n', ...
-    solverInfo.computed_sketch_relative_residual(end));
+    solver_info.computed_sketch_relative_residual(end));
 fprintf('All structured residual sketch checks passed.\n\n');
 
 end
 
-
-function explicitMatrix = form_explicit_sketch_matrix(sketch)
+function explicit_matrix = form_explicit_sketch_matrix(sketch)
 %FORM_EXPLICIT_SKETCH_MATRIX Construct S only for the tiny test.
 
-sketchSize = sketch.sketch_size;
-tensorDimensions = sketch.tensor_dimensions;
-numberOfModes = sketch.number_of_modes;
-explicitMatrix = zeros(sketchSize, prod(tensorDimensions));
+sketch_size = sketch.sketch_size;
+n = sketch.tensor_dimensions;
+d = sketch.number_of_modes;
+explicit_matrix = zeros(sketch_size, prod(n));
 
-for rowIndex = 1:sketchSize
-    oneRow = sketch.factors{1}(rowIndex, :);
-    for mode = 2:numberOfModes
-        oneRow = kron(sketch.factors{mode}(rowIndex, :), oneRow);
+for row_idx = 1:sketch_size
+    one_row = sketch.factors{1}(row_idx, :);
+    for mode = 2:d
+        one_row = kron(sketch.factors{mode}(row_idx, :), one_row);
     end
-    explicitMatrix(rowIndex, :) = oneRow;
+    explicit_matrix(row_idx, :) = one_row;
 end
 
 end

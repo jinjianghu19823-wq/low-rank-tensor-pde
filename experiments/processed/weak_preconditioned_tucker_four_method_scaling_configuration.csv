@@ -1,4 +1,0 @@
-experiment_id,N,number_of_modes,maximum_iterations,gaussian_exponent,preconditioner_rank,minimum_preconditioned_eigenvalue,maximum_preconditioned_eigenvalue,predicted_condition_number,spectral_delta,preconditioner_positive_definite,residual_sketch_size,orthogonalisation_window,residual_sketch_seeds
-2026-08-19_weak_preconditioned_tucker_four_method_scaling,150,3,100,5,1,0.00079185244341002,9.70676916910058,12258.3055086621,8.70676916910058,1,336,2,101;202;303;404;505
-2026-08-19_weak_preconditioned_tucker_four_method_scaling,200,3,100,5,1,0.000338830332976398,10.7422379266901,31703.8850457301,9.74223792669014,1,336,2,101;202;303;404;505
-2026-08-19_weak_preconditioned_tucker_four_method_scaling,250,3,100,5,1,0.000172468031678712,11.5529724337327,66986.1673568269,10.5529724337327,1,336,2,101;202;303;404;505

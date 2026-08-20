@@ -5,13 +5,13 @@ if isempty(addition)
     return
 end
 
-timingFields = fieldnames(empty_tucker_kernel_timing());
+timing_fields = fieldnames(empty_tucker_kernel_timing());
 
-for fieldIndex = 1:numel(timingFields)
-    fieldName = timingFields{fieldIndex};
+for field_idx = 1:numel(timing_fields)
+    field_name = timing_fields{field_idx};
 
-    if isfield(addition, fieldName)
-        total.(fieldName) = total.(fieldName) + addition.(fieldName);
+    if isfield(addition, field_name)
+        total.(field_name) = total.(field_name) + addition.(field_name);
     end
 end
 

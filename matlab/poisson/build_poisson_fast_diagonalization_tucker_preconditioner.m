@@ -1,150 +1,108 @@
-function [preconditioner, info] = build_poisson_fast_diagonalization_tucker_preconditioner(A1, inverseEigenvalueRank)
+function [preconditioner, info] = build_poisson_fast_diagonalization_tucker_preconditioner(A1, inverse_eigenvalue_rank)
 %BUILD_POISSON_FAST_DIAGONALIZATION_TUCKER_PRECONDITIONER Build M_r.
-%
-% The three-dimensional Dirichlet finite-difference Poisson matrix is
-% diagonal in the DST-I basis. This function constructs the exact spectral
-% inverse tensor
-%
-%   D(i,j,k) = 1 / (lambda_i + lambda_j + lambda_k)
-%
-% and approximates it by a fixed multilinear-rank Tucker tensor. The
-% resulting preconditioner is intended for the fast-diagonalization action
-%
-%   P(Y) = IDST( D_r .* DST(Y) ).
-%
-% This is a proof-of-concept builder for the three-dimensional dissertation
-% experiment. It forms the N-by-N-by-N inverse-eigenvalue tensor during
-% setup, but stores only its Tucker approximation afterward.
-%
-% Thesis/experiment notation (Section 6.2):
-%   A1                          <->  A_1
-%   N                           <->  number of interior points per mode
-%   oneDimensionalEigenvalues  <->  lambda_i
-%   lambdaSum(i,j,k)           <->  lambda_i+lambda_j+lambda_k
-%   exactInverseEigenvalues    <->  D(i,j,k)=1/(lambda_i+lambda_j+lambda_k)
-%   inverseEigenvalueRank      <->  prescribed Tucker rank r
-%   inverseEigenvalueTensor    <->  D_r
-%   preconditioner             <->  reusable representation of \mathcal P_r
-%   spectralDelta              <->  delta=max|1-(lambda_i+lambda_j+lambda_k)D_r|
-%   conditionNumber            <->  predicted kappa_2(M_r A_0)
-
-
-%% 1. Check the inputs and the one-dimensional matrix
 
 if size(A1, 1) ~= size(A1, 2)
     error('A1 must be a square matrix.');
 end
 
 N = size(A1, 1);
-maximumRanks = normalise_tucker_rank_cap(inverseEigenvalueRank, [N, N, N]);
+max_ranks = normalise_tucker_rank_cap(inverse_eigenvalue_rank, [N, N, N]);
 
-diagonalCoefficient = full(A1(1, 1));
+diagonal_coefficient = full(A1(1, 1));
 
 if N > 1
-    offDiagonalCoefficient = full(A1(1, 2));
+    offdiag = full(A1(1, 2));
 else
-    offDiagonalCoefficient = 0;
+    offdiag = 0;
 end
 
-referenceA1 = spdiags([offDiagonalCoefficient * ones(N, 1), diagonalCoefficient * ones(N, 1), offDiagonalCoefficient * ones(N, 1)], -1:1, N, N);
+reference_a1 = spdiags([offdiag * ones(N, 1), diagonal_coefficient * ones(N, 1), offdiag * ones(N, 1)], -1:1, N, N);
 
-matrixMismatch = norm(A1 - referenceA1, 'fro') / max(norm(A1, 'fro'), eps);
+matrix_mismatch = norm(A1 - reference_a1, 'fro') / max(norm(A1, 'fro'), eps);
 
-if matrixMismatch > 1e-12
+if matrix_mismatch > 1e-12
     error(['A1 must be the symmetric constant-coefficient Dirichlet ', ...
            'tridiagonal matrix diagonalised by DST-I.']);
 end
 
-if offDiagonalCoefficient >= 0
+if offdiag >= 0
     error('The Dirichlet Poisson off-diagonal coefficient must be negative.');
 end
 
-
-%% 2. Construct the exact inverse eigenvalues
-
-setupTimer = tic;
+setup_timer = tic;
 
 indices = (1:N).';
-oneDimensionalEigenvalues = diagonalCoefficient + 2 * offDiagonalCoefficient * cos(indices * pi / (N + 1));
+one_dimensional_eigenvalues = diagonal_coefficient + 2 * offdiag * cos(indices * pi / (N + 1));
 
-if any(oneDimensionalEigenvalues <= 0)
+if any(one_dimensional_eigenvalues <= 0)
     error('A1 must be positive definite.');
 end
 
-lambdaSum = oneDimensionalEigenvalues + reshape(oneDimensionalEigenvalues, 1, N) + reshape(oneDimensionalEigenvalues, 1, 1, N);
-exactInverseEigenvalues = 1 ./ lambdaSum;
+lambda_sum = one_dimensional_eigenvalues + reshape(one_dimensional_eigenvalues, 1, N) + reshape(one_dimensional_eigenvalues, 1, 1, N);
+exact_inverse_eigenvalues = 1 ./ lambda_sum;
 
+compression_timer = tic;
 
-%% 3. Compress the spectral multiplier at the prescribed rank
+inverse_eigenvalue_tensor = hosvd(tensor(exact_inverse_eigenvalues), 1e-14, 'ranks', max_ranks, 'sequential', false, 'verbosity', 0);
 
-compressionTimer = tic;
+compression_time = toc(compression_timer);
 
-inverseEigenvalueTensor = hosvd(tensor(exactInverseEigenvalues), 1e-14, 'ranks', maximumRanks, 'sequential', false, 'verbosity', 0);
+diagnostic_timer = tic;
 
-compressionTime = toc(compressionTimer);
+approximated_inverse_eigenvalues = double(full(inverse_eigenvalue_tensor));
+preconditioned_eigenvalues = lambda_sum .* approximated_inverse_eigenvalues;
 
+inverse_error = norm(exact_inverse_eigenvalues(:) - approximated_inverse_eigenvalues(:)) / norm(exact_inverse_eigenvalues(:));
 
-%% 4. Evaluate setup diagnostics
+minimum_preconditioned_eigenvalue = min(preconditioned_eigenvalues(:));
+maximum_preconditioned_eigenvalue = max(preconditioned_eigenvalues(:));
+spectral_delta = max(abs(1 - preconditioned_eigenvalues(:)));
 
-diagnosticTimer = tic;
+is_positive_definite = minimum_preconditioned_eigenvalue > 0;
 
-approximatedInverseEigenvalues = double(full(inverseEigenvalueTensor));
-preconditionedEigenvalues = lambdaSum .* approximatedInverseEigenvalues;
-
-inverseError = norm(exactInverseEigenvalues(:) - approximatedInverseEigenvalues(:)) / norm(exactInverseEigenvalues(:));
-
-minimumPreconditionedEigenvalue = min(preconditionedEigenvalues(:));
-maximumPreconditionedEigenvalue = max(preconditionedEigenvalues(:));
-spectralDelta = max(abs(1 - preconditionedEigenvalues(:)));
-
-isPositiveDefinite = minimumPreconditionedEigenvalue > 0;
-
-if isPositiveDefinite
-    conditionNumber = maximumPreconditionedEigenvalue / minimumPreconditionedEigenvalue;
+if is_positive_definite
+    condition_number = maximum_preconditioned_eigenvalue / minimum_preconditioned_eigenvalue;
 else
-    conditionNumber = NaN;
+    condition_number = NaN;
 end
 
-retainedRanks = size(inverseEigenvalueTensor.core);
-storageEntries = numel(inverseEigenvalueTensor.core);
+retained_ranks = size(inverse_eigenvalue_tensor.core);
+storage_entries = numel(inverse_eigenvalue_tensor.core);
 
 for mode = 1:3
-    storageEntries = storageEntries + ...
-        numel(inverseEigenvalueTensor.u{mode});
+    storage_entries = storage_entries + ...
+        numel(inverse_eigenvalue_tensor.u{mode});
 end
 
-diagnosticTime = toc(diagnosticTimer);
-setupTime = toc(setupTimer);
-
-
-%% 5. Return the reusable preconditioner and diagnostics
+diagnostic_time = toc(diagnostic_timer);
+setup_time = toc(setup_timer);
 
 preconditioner.N = N;
 preconditioner.number_of_modes = 3;
 preconditioner.transform = 'DST-I';
 preconditioner.one_dimensional_eigenvalues = ...
-    oneDimensionalEigenvalues;
+    one_dimensional_eigenvalues;
 preconditioner.inverse_eigenvalue_tensor = ...
-    inverseEigenvalueTensor;
-preconditioner.inverse_eigenvalue_ranks = retainedRanks;
+    inverse_eigenvalue_tensor;
+preconditioner.inverse_eigenvalue_ranks = retained_ranks;
 
 info.N = N;
-info.requested_ranks = maximumRanks;
-info.retained_ranks = retainedRanks;
-info.inverse_eigenvalue_relative_frobenius_error = inverseError;
+info.requested_ranks = max_ranks;
+info.retained_ranks = retained_ranks;
+info.inverse_eigenvalue_relative_frobenius_error = inverse_error;
 info.minimum_preconditioned_eigenvalue = ...
-    minimumPreconditionedEigenvalue;
+    minimum_preconditioned_eigenvalue;
 info.maximum_preconditioned_eigenvalue = ...
-    maximumPreconditionedEigenvalue;
-info.spectral_delta = spectralDelta;
-info.is_positive_definite = isPositiveDefinite;
-info.condition_number = conditionNumber;
-info.storage_entries = storageEntries;
-info.storage_mib = 8 * storageEntries / 2^20;
+    maximum_preconditioned_eigenvalue;
+info.spectral_delta = spectral_delta;
+info.is_positive_definite = is_positive_definite;
+info.condition_number = condition_number;
+info.storage_entries = storage_entries;
+info.storage_mib = 8 * storage_entries / 2^20;
 info.full_spectral_storage_mib = ...
-    8 * numel(exactInverseEigenvalues) / 2^20;
-info.compression_time_sec = compressionTime;
-info.diagnostic_time_sec = diagnosticTime;
-info.setup_time_sec = setupTime;
+    8 * numel(exact_inverse_eigenvalues) / 2^20;
+info.compression_time_sec = compression_time;
+info.diagnostic_time_sec = diagnostic_time;
+info.setup_time_sec = setup_time;
 
 end

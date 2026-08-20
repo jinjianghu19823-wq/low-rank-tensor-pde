@@ -1,38 +1,24 @@
-function residualNorm = ...
+function residual_norm = ...
     preconditioned_residual_norm_tucker_poisson_fast_diagonalization( ...
-        U, F, A1, preconditioner, diagnosticTolerance)
-%PRECONDITIONED_RESIDUAL_NORM_TUCKER_POISSON_FAST_DIAGONALIZATION
-% Independently recompute ||M_r(F-L(U))||_F.
-%
-% The diagnostic uses one fixed, tight tolerance. It is independent of the
-% Hessenberg least-squares residual and of the step-dependent tolerances
-% used inside relaxed Tucker-GMRES.
-%
-% Thesis/experiment notation (Sections 5.5 and 6.2):
-%   U, F                        <->  \mathcal X_j, \mathcal B_0
-%   A1                          <->  A_1
-%   originalResidual           <->  \mathcal B_0-\mathcal A_0(\mathcal X_j)
-%   preconditionedResidual     <->  \mathcal P_r(originalResidual)
-%   residualNorm               <->  ||\mathcal P_r(\mathcal B_0-
-%                                      \mathcal A_0(\mathcal X_j))||_F
-%   diagnosticTolerance        <->  fixed diagnostic-only tolerance
+        U, F, A1, preconditioner, diagnostic_tolerance)
+%PRECONDITIONED_RESIDUAL_NORM_TUCKER_POISSON_FAST_DIAGONALIZATION Independently recompute ||M_r(F-L(U))||_F.
 
-if diagnosticTolerance <= 0 || diagnosticTolerance >= 1
-    error('diagnosticTolerance must be between 0 and 1.');
+if diagnostic_tolerance <= 0 || diagnostic_tolerance >= 1
+    error('diagnostic_tolerance must be between 0 and 1.');
 end
 
-fullRanks = size(F);
+full_ranks = size(F);
 
 [AU, ~] = poisson_action_tucker( ...
-    U, A1, diagnosticTolerance, fullRanks);
+    U, A1, diagnostic_tolerance, full_ranks);
 
-originalResidual = tucker_axpby_exact(F, 1, AU, -1);
+original_residual = tucker_axpby_exact(F, 1, AU, -1);
 
-[preconditionedResidual, ~] = ...
+[r_precond, ~] = ...
     apply_poisson_fast_diagonalization_tucker_preconditioner( ...
-        originalResidual, preconditioner, diagnosticTolerance, ...
-        fullRanks);
+        original_residual, preconditioner, diagnostic_tolerance, ...
+        full_ranks);
 
-residualNorm = norm(preconditionedResidual);
+residual_norm = norm(r_precond);
 
 end

@@ -1,45 +1,7 @@
-function [Y, info] = poisson_action_tucker(X, A1, compressionTolerance, maximumMultilinearRank)
+function [Y, info] = poisson_action_tucker(X, A1, eta, max_rank)
 %POISSON_ACTION_TUCKER Apply the d-dimensional Poisson operator.
-%
-% This function calculates
-%
-%     L(X) = X x_1 A1 + X x_2 A1 + ... + X x_d A1,
-%
-% where x_n denotes multiplication in tensor mode n.
-%
-% Inputs:
-%   X
-%       Input tensor stored as a Tensor Toolbox ttensor.
-%
-%   A1
-%       One-dimensional finite-difference matrix.
-%
-%   compressionTolerance
-%       Relative tolerance used after adding the Tucker terms.
-%
-%   maximumMultilinearRank (optional)
-%       Scalar or mode-wise hard rank cap used after every addition.
-%
-% Output:
-%   Y
-%       Compressed Tucker representation of L(X).
-%
-%   info
-%       Diagnostics for the sequential additions.
-%
-% Thesis notation (Sections 5.5 and 6.2):
-%   X, Y                        <->  \mathcal X, \mathcal A_0(\mathcal X)
-%   A1                          <->  A_1
-%   compressionTolerance       <->  \eta or \eta_j
-%   maximumMultilinearRank     <->  \boldsymbol R=(R_1,...,R_d)
-%   nextTerm                   <->  \mathcal X \times_n A_1
-%   numberOfModes              <->  d
-% Here \mathcal A_0(\mathcal X)=\sum_{n=1}^d \mathcal X \times_n A_1.
 
-callTimer = tic;
-
-
-%% 1. Check the inputs
+call_timer = tic;
 
 if ~isa(X, 'ttensor')
     error('X must be a Tensor Toolbox ttensor object.');
@@ -49,73 +11,63 @@ if size(A1, 1) ~= size(A1, 2)
     error('A1 must be a square matrix.');
 end
 
-if compressionTolerance <= 0 || compressionTolerance >= 1
-    error('compressionTolerance must be between 0 and 1.');
+if eta <= 0 || eta >= 1
+    error('eta must be between 0 and 1.');
 end
 
 if nargin < 4
-    maximumMultilinearRank = [];
+    max_rank = [];
 end
 
-maximumRanks = normalise_tucker_rank_cap(maximumMultilinearRank, size(X));
+max_ranks = normalise_tucker_rank_cap(max_rank, size(X));
 
-numberOfModes = ndims(X);
-tensorSize = size(X);
+d = ndims(X);
+tensor_size = size(X);
 
-for mode = 1:numberOfModes
+for mode = 1:d
 
-    if tensorSize(mode) ~= size(A1, 1)
+    if tensor_size(mode) ~= size(A1, 1)
         error('Every mode of X must have the same size as A1.');
     end
 
 end
 
-
-%% 2. Apply A1 in the first mode
-
-% Tensor Toolbox's ttm command performs a tensor-times-matrix product.
-% The third input, 1, says that A1 acts in mode 1.
-componentTimer = tic;
+component_timer = tic;
 Y = ttm(X, A1, 1);
-modeProductTime = toc(componentTimer);
+mode_product_time = toc(component_timer);
 
-kernelTiming = empty_tucker_kernel_timing();
+kernel_timing = empty_tucker_kernel_timing();
 
-additionCapActive = false(numberOfModes - 1, 1);
-additionErrorEstimates = zeros(numberOfModes - 1, 1);
+addition_cap_active = false(d - 1, 1);
+addition_error_estimates = zeros(d - 1, 1);
 
+for mode = 2:d
 
-%% 3. Add the contributions from the remaining modes
+    component_timer = tic;
+    next_term = ttm(X, A1, mode);
+    mode_product_time = mode_product_time + toc(component_timer);
 
-for mode = 2:numberOfModes
+    [Y, add_info] = tucker_axpby_round(Y, 1, next_term, 1, eta, max_ranks);
 
-    % Calculate the next term X x_mode A1.
-    componentTimer = tic;
-    nextTerm = ttm(X, A1, mode);
-    modeProductTime = modeProductTime + toc(componentTimer);
+    kernel_timing = add_tucker_kernel_timing( ...
+        kernel_timing, add_info.kernel_timing);
 
-    % Add the new term to the running result and recompress it.
-    [Y, additionInfo] = tucker_axpby_round(Y, 1, nextTerm, 1, compressionTolerance, maximumRanks);
-
-    kernelTiming = add_tucker_kernel_timing( ...
-        kernelTiming, additionInfo.kernel_timing);
-
-    additionCapActive(mode - 1) = additionInfo.rank_cap_active;
-    additionErrorEstimates(mode - 1) = ...
-        additionInfo.relative_error_estimate;
+    addition_cap_active(mode - 1) = add_info.rank_cap_active;
+    addition_error_estimates(mode - 1) = ...
+        add_info.relative_error_estimate;
 
 end
 
-info.requested_tolerance = compressionTolerance;
-info.maximum_ranks = maximumRanks;
-info.addition_rank_cap_active = additionCapActive;
-info.addition_relative_error_estimate = additionErrorEstimates;
-info.rank_cap_active = any(additionCapActive);
+info.requested_tolerance = eta;
+info.maximum_ranks = max_ranks;
+info.addition_rank_cap_active = addition_cap_active;
+info.addition_relative_error_estimate = addition_error_estimates;
+info.rank_cap_active = any(addition_cap_active);
 info.maximum_local_recompression_error = ...
-    max([0; additionErrorEstimates]);
-kernelTiming.poisson_mode_product_time_sec = ...
-    kernelTiming.poisson_mode_product_time_sec + modeProductTime;
-info.kernel_timing = kernelTiming;
-info.call_time_sec = toc(callTimer);
+    max([0; addition_error_estimates]);
+kernel_timing.poisson_mode_product_time_sec = ...
+    kernel_timing.poisson_mode_product_time_sec + mode_product_time;
+info.kernel_timing = kernel_timing;
+info.call_time_sec = toc(call_timer);
 
 end

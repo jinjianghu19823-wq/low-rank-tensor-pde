@@ -6,9 +6,9 @@ S = numerical_plot_style();
 
 p = inputParser;
 p.FunctionName = mfilename;
-addParameter(p, 'WidthCm', S.size.fullWidthCm(1), ...
+addParameter(p, 'WidthCm', S.size.full_width_cm(1), ...
     @(x) validateattributes(x, {'numeric'}, {'scalar', 'positive'}));
-addParameter(p, 'HeightCm', S.size.fullWidthCm(2), ...
+addParameter(p, 'HeightCm', S.size.full_width_cm(2), ...
     @(x) validateattributes(x, {'numeric'}, {'scalar', 'positive'}));
 addParameter(p, 'Grid', true, @(x) islogical(x) && isscalar(x));
 addParameter(p, 'MinorGrid', false, @(x) islogical(x) && isscalar(x));
@@ -37,8 +37,8 @@ if isprop(fig, 'Renderer')
     fig.Renderer = 'painters';
 end
 
-axesHandles = findall(fig, 'Type', 'axes');
-for ax = reshape(axesHandles, 1, [])
+axes_handles = findall(fig, 'Type', 'axes');
+for ax = reshape(axes_handles, 1, [])
     ax.FontName = char(opt.FontName);
     ax.FontSize = opt.AxesFontSize;
     ax.LineWidth = 0.75;
@@ -72,8 +72,8 @@ for ax = reshape(axesHandles, 1, [])
         ax.YMinorGrid = 'off';
     end
 
-    labelHandles = [ax.XLabel, ax.YLabel, ax.ZLabel];
-    for label = reshape(labelHandles, 1, [])
+    label_handles = [ax.XLabel, ax.YLabel, ax.ZLabel];
+    for label = reshape(label_handles, 1, [])
         label.Interpreter = 'latex';
         label.FontName = char(opt.FontName);
         label.FontSize = opt.LabelFontSize;
@@ -85,14 +85,14 @@ for ax = reshape(axesHandles, 1, [])
     ax.Title.FontSize = opt.TitleFontSize;
     ax.Title.FontWeight = 'normal';
 
-    lineHandles = findall(ax, 'Type', 'line');
-    for lineHandle = reshape(lineHandles, 1, [])
-        if lineHandle.LineWidth < S.lineWidth
-            lineHandle.LineWidth = S.lineWidth;
+    line_handles = findall(ax, 'Type', 'line');
+    for line_handle = reshape(line_handles, 1, [])
+        if line_handle.LineWidth < S.line_width
+            line_handle.LineWidth = S.line_width;
         end
-        if ~strcmp(lineHandle.Marker, 'none') && ...
-                lineHandle.MarkerSize < S.markerSize
-            lineHandle.MarkerSize = S.markerSize;
+        if ~strcmp(line_handle.Marker, 'none') && ...
+                line_handle.MarkerSize < S.marker_size
+            line_handle.MarkerSize = S.marker_size;
         end
     end
 
@@ -101,27 +101,27 @@ for ax = reshape(axesHandles, 1, [])
     end
 end
 
-textHandles = findall(fig, 'Type', 'text');
-for textHandle = reshape(textHandles, 1, [])
-    if isprop(textHandle, 'Interpreter')
-        textHandle.Interpreter = 'latex';
+text_handles = findall(fig, 'Type', 'text');
+for text_handle = reshape(text_handles, 1, [])
+    if isprop(text_handle, 'Interpreter')
+        text_handle.Interpreter = 'latex';
     end
 end
 
-legendHandles = findall(fig, 'Type', 'legend');
-for legendHandle = reshape(legendHandles, 1, [])
-    legendHandle.Interpreter = 'latex';
-    legendHandle.FontName = char(opt.FontName);
-    legendHandle.FontSize = opt.LegendFontSize;
-    legendHandle.Box = 'off';
-    legendHandle.Color = 'none';
+legend_handles = findall(fig, 'Type', 'legend');
+for legend_handle = reshape(legend_handles, 1, [])
+    legend_handle.Interpreter = 'latex';
+    legend_handle.FontName = char(opt.FontName);
+    legend_handle.FontSize = opt.LegendFontSize;
+    legend_handle.Box = 'off';
+    legend_handle.Color = 'none';
 end
 
-constantLines = findall(fig, 'Type', 'constantline');
-for constantLine = reshape(constantLines, 1, [])
-    constantLine.LineWidth = S.referenceLineWidth;
-    if isprop(constantLine, 'Interpreter')
-        constantLine.Interpreter = 'latex';
+constant_lines = findall(fig, 'Type', 'constantline');
+for constant_line = reshape(constant_lines, 1, [])
+    constant_line.LineWidth = S.reference_line_width;
+    if isprop(constant_line, 'Interpreter')
+        constant_line.Interpreter = 'latex';
     end
 end
 

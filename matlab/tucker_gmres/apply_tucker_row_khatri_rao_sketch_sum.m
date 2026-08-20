@@ -1,36 +1,33 @@
 function [values, info] = apply_tucker_row_khatri_rao_sketch_sum( ...
-    terms, coefficients, sketch)
+    terms, coeff, sketch)
 %APPLY_TUCKER_ROW_KHATRI_RAO_SKETCH_SUM Sketch a formal Tucker sum.
-%
-% Linearity permits the residual sketch to be accumulated term by term.
-% The complete Tucker sum and its large block core are not formed.
 
-callTimer = tic;
+call_timer = tic;
 
 if ~iscell(terms) || isempty(terms)
     error('terms must be a nonempty cell array.');
 end
 
-coefficients = double(coefficients(:));
+coeff = double(coeff(:));
 
-if numel(coefficients) ~= numel(terms) || ...
-        any(~isfinite(coefficients))
-    error('coefficients must contain one finite value per Tucker term.');
+if numel(coeff) ~= numel(terms) || ...
+        any(~isfinite(coeff))
+    error('coeff must contain one finite value per Tucker term.');
 end
 
 values = zeros(sketch.sketch_size, 1);
-termTime = zeros(numel(terms), 1);
+term_time = zeros(numel(terms), 1);
 
-for termIndex = 1:numel(terms)
-    componentTimer = tic;
-    oneValue = apply_tucker_row_khatri_rao_sketch( ...
-        terms{termIndex}, sketch);
-    termTime(termIndex) = toc(componentTimer);
-    values = values + coefficients(termIndex) * oneValue;
+for term_idx = 1:numel(terms)
+    component_timer = tic;
+    one_value = apply_tucker_row_khatri_rao_sketch( ...
+        terms{term_idx}, sketch);
+    term_time(term_idx) = toc(component_timer);
+    values = values + coeff(term_idx) * one_value;
 end
 
 info.number_of_terms = numel(terms);
-info.term_time_sec = termTime;
-info.call_time_sec = toc(callTimer);
+info.term_time_sec = term_time;
+info.call_time_sec = toc(call_timer);
 
 end

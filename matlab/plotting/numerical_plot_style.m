@@ -1,7 +1,5 @@
 function S = numerical_plot_style()
 %NUMERICAL_PLOT_STYLE Stable visual vocabulary for numerical figures.
-%   S = NUMERICAL_PLOT_STYLE() returns a colorblind-conscious palette,
-%   semantic method encodings, line widths, font sizes, and common sizes.
 
 S.colors.charcoal   = [ 45,  45,  45] / 255;
 S.colors.blue       = [  0, 114, 178] / 255;
@@ -11,7 +9,7 @@ S.colors.purple     = [170,  85, 170] / 255;
 S.colors.sky        = [ 86, 180, 233] / 255;
 S.colors.orange     = [230, 159,   0] / 255;
 S.colors.gray       = [115, 115, 115] / 255;
-S.colors.lightGray  = [210, 210, 210] / 255;
+S.colors.light_gray = [210, 210, 210] / 255;
 
 S.methods.baseline = struct( ...
     'color', S.colors.charcoal, 'line', '-', 'marker', 'o');
@@ -24,14 +22,14 @@ S.methods.comparator = struct( ...
 S.methods.reference = struct( ...
     'color', S.colors.gray, 'line', '--', 'marker', 'none');
 
-S.lineWidth = 1.35;
-S.referenceLineWidth = 0.85;
-S.markerSize = 4.5;
+S.line_width = 1.35;
+S.reference_line_width = 0.85;
+S.marker_size = 4.5;
 S.font.axes = 8.5;
 S.font.label = 9.5;
 S.font.legend = 8.0;
 S.font.title = 9.0;
-S.size.fullWidthCm = [15.8, 8.8];
-S.size.halfWidthCm = [7.8, 6.0];
-S.size.threePanelCm = [15.8, 5.8];
+S.size.full_width_cm = [15.8, 8.8];
+S.size.half_width_cm = [7.8, 6.0];
+S.size.three_panel_cm = [15.8, 5.8];
 end

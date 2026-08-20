@@ -1,8 +1,8 @@
-function paths = export_numerical_figure(fig, outputStem, varargin)
+function paths = export_numerical_figure(fig, output_stem, varargin)
 %EXPORT_NUMERICAL_FIGURE Export a vector PDF and optional PNG/FIG copies.
 
 validateattributes(fig, {'matlab.ui.Figure'}, {'scalar'}, mfilename, 'fig');
-if ~(ischar(outputStem) || (isstring(outputStem) && isscalar(outputStem)))
+if ~(ischar(output_stem) || (isstring(output_stem) && isscalar(output_stem)))
     error('export_numerical_figure:InvalidPath', ...
         'OUTPUTSTEM must be a character vector or scalar string.');
 end
@@ -16,57 +16,57 @@ addParameter(p, 'WriteFIG', false, @(x) islogical(x) && isscalar(x));
 parse(p, varargin{:});
 opt = p.Results;
 
-outputStem = char(outputStem);
-[folder, name, extension] = fileparts(outputStem);
+output_stem = char(output_stem);
+[folder, name, extension] = fileparts(output_stem);
 if isempty(name)
     error('export_numerical_figure:InvalidPath', ...
         'OUTPUTSTEM must include a file name.');
 end
 if ismember(lower(extension), {'.pdf', '.png', '.fig'})
-    outputStem = fullfile(folder, name);
+    output_stem = fullfile(folder, name);
 elseif ~isempty(extension)
     error('export_numerical_figure:UnsupportedExtension', ...
         'Use a path without an extension or with .pdf, .png, or .fig.');
 end
 
-[folder, ~, ~] = fileparts(outputStem);
+[folder, ~, ~] = fileparts(output_stem);
 if ~isempty(folder) && ~isfolder(folder)
     mkdir(folder);
 end
 
-paths.pdf = [outputStem, '.pdf'];
+paths.pdf = [output_stem, '.pdf'];
 paths.png = '';
 paths.fig = '';
 
-originalUnits = fig.Units;
+original_units = fig.Units;
 fig.Units = 'centimeters';
-figureSizeCm = fig.Position(3:4);
-fig.Units = originalUnits;
+figure_size_cm = fig.Position(3:4);
+fig.Units = original_units;
 
 drawnow;
 exportgraphics(fig, paths.pdf, ...
     'ContentType', 'vector', ...
     'BackgroundColor', 'white', ...
-    'Width', figureSizeCm(1), ...
-    'Height', figureSizeCm(2), ...
+    'Width', figure_size_cm(1), ...
+    'Height', figure_size_cm(2), ...
     'Units', 'centimeters', ...
     'Padding', 'figure', ...
     'PreserveAspectRatio', 'off');
 
 if opt.WritePNG
-    paths.png = [outputStem, '.png'];
+    paths.png = [output_stem, '.png'];
     exportgraphics(fig, paths.png, ...
         'Resolution', opt.PNGResolution, ...
         'BackgroundColor', 'white', ...
-        'Width', figureSizeCm(1), ...
-        'Height', figureSizeCm(2), ...
+        'Width', figure_size_cm(1), ...
+        'Height', figure_size_cm(2), ...
         'Units', 'centimeters', ...
         'Padding', 'figure', ...
         'PreserveAspectRatio', 'off');
 end
 
 if opt.WriteFIG
-    paths.fig = [outputStem, '.fig'];
+    paths.fig = [output_stem, '.fig'];
     savefig(fig, paths.fig);
 end
 end

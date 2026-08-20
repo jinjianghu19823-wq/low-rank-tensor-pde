@@ -1,193 +1,130 @@
-function [T, info] = sthosvd_round_tensor(X, relativeTolerance, maximumMultilinearRank, modeOrder)
+function [T, info] = sthosvd_round_tensor(X, tol, max_rank, mode_order)
 %STHOSVD_ROUND_TENSOR Recompress a small tensor with tolerance and rank cap.
-%
-% This routine implements the STHOSVD step used inside Tucker
-% recompression. For each processed mode, it selects the smallest rank whose
-% discarded squared singular values fit inside the mode error budget
-%
-%     relativeTolerance^2 * norm(X)^2 / d.
-%
-% The retained rank is then limited by maximumMultilinearRank. If that cap
-% is smaller than the tolerance-selected rank, the cap is marked active and
-% the requested tolerance is no longer guaranteed.
-%
-% Inputs:
-%   X
-%       Small Tensor Toolbox tensor, usually the orthogonalised Tucker core.
-%
-%   relativeTolerance
-%       Requested global relative STHOSVD tolerance.
-%
-%   maximumMultilinearRank
-%       Optional scalar or mode-wise maximum rank. Use [] for no additional
-%       cap.
-%
-%   modeOrder
-%       Optional permutation describing the sequential processing order.
-%
-% Outputs:
-%   T
-%       Recompressed ttensor in the coordinate space of X.
-%
-%   info
-%       Selected ranks, tolerance ranks, discarded energy, and whether the
-%       rank cap was active.
-%
-% Thesis notation (Section 5.5 and Algorithm Tucker AXPBY):
-%   X, workingCore             <->  \mathcal C^(0), \mathcal C^(j-1)
-%   relativeTolerance          <->  \eta
-%   maximumMultilinearRank     <->  \boldsymbol R=(R_1,...,R_d)
-%   modeOrder                  <->  \rho=(\rho_1,...,\rho_d)
-%   mode, orderIndex           <->  n=\rho_j, j
-%   unfolding                  <->  C_(n)^(j-1)
-%   leftVectors                <->  L^(n)
-%   toleranceRank              <->  s_n^(\eta)
-%   retainedRank               <->  s_n=min{s_n^(\eta),R_n}
-%   factorMatrices{mode}       <->  P^(n)
-%   T                          <->  recompressed core tensor
 
-callTimer = tic;
-
-
-%% 1. Check the inputs
+call_timer = tic;
 
 if ~isa(X, 'tensor')
     error('X must be a Tensor Toolbox tensor object.');
 end
 
-if ~isscalar(relativeTolerance) || relativeTolerance <= 0 || relativeTolerance >= 1
-    error('relativeTolerance must be one number between 0 and 1.');
+if ~isscalar(tol) || tol <= 0 || tol >= 1
+    error('tol must be one number between 0 and 1.');
 end
 
-numberOfModes = ndims(X);
-tensorDimensions = size(X);
+d = ndims(X);
+n = size(X);
 
 if nargin < 3
-    maximumMultilinearRank = [];
+    max_rank = [];
 end
 
-if nargin < 4 || isempty(modeOrder)
-    modeOrder = 1:numberOfModes;
+if nargin < 4 || isempty(mode_order)
+    mode_order = 1:d;
 end
 
-modeOrder = double(modeOrder(:).');
+mode_order = double(mode_order(:).');
 
-if ~isequal(sort(modeOrder), 1:numberOfModes)
-    error('modeOrder must contain every tensor mode exactly once.');
+if ~isequal(sort(mode_order), 1:d)
+    error('mode_order must contain every tensor mode exactly once.');
 end
 
-maximumRanks = normalise_tucker_rank_cap(maximumMultilinearRank, tensorDimensions);
+max_ranks = normalise_tucker_rank_cap(max_rank, n);
 
+norm_x = norm(X);
+mode_error_threshold = tol * norm_x / sqrt(d);
+mode_error_budget = mode_error_threshold^2;
 
-%% 2. Define the global and mode-wise error budgets
+factor_matrices = cell(d, 1);
+tolerance_ranks = zeros(1, d);
+retained_ranks = zeros(1, d);
+discarded_norms = zeros(1, d);
+discarded_energy = zeros(1, d);
+rank_cap_active_by_mode = false(1, d);
+unfolding_time_by_mode = zeros(1, d);
+svd_time_by_mode = zeros(1, d);
+rank_selection_time_by_mode = zeros(1, d);
+projection_time_by_mode = zeros(1, d);
 
-inputNorm = norm(X);
-modeErrorThreshold = relativeTolerance * inputNorm / sqrt(numberOfModes);
-modeErrorBudget = modeErrorThreshold^2;
+working_core = X;
 
-factorMatrices = cell(numberOfModes, 1);
-toleranceRanks = zeros(1, numberOfModes);
-retainedRanks = zeros(1, numberOfModes);
-discardedNorms = zeros(1, numberOfModes);
-discardedEnergy = zeros(1, numberOfModes);
-rankCapActiveByMode = false(1, numberOfModes);
-unfoldingTimeByMode = zeros(1, numberOfModes);
-svdTimeByMode = zeros(1, numberOfModes);
-rankSelectionTimeByMode = zeros(1, numberOfModes);
-projectionTimeByMode = zeros(1, numberOfModes);
+for order_index = 1:d
 
-workingCore = X;
+    mode = mode_order(order_index);
 
-
-%% 3. Process the unfoldings sequentially
-
-for orderIndex = 1:numberOfModes
-
-    mode = modeOrder(orderIndex);
-
-    componentTimer = tic;
-    unfolding = double(tenmat(workingCore, mode));
-    unfoldingTimeByMode(mode) = toc(componentTimer);
+    component_timer = tic;
+    unfolding = double(tenmat(working_core, mode));
+    unfolding_time_by_mode(mode) = toc(component_timer);
 
     % The left singular vectors span the current mode subspace.
-    componentTimer = tic;
-    [leftVectors, singularValueMatrix, ~] = svd(unfolding, 'econ');
-    svdTimeByMode(mode) = toc(componentTimer);
+    component_timer = tic;
+    [left_vectors, singular_value_matrix, ~] = svd(unfolding, 'econ');
+    svd_time_by_mode(mode) = toc(component_timer);
 
-    componentTimer = tic;
-    singularValues = diag(singularValueMatrix);
+    component_timer = tic;
+    svals = diag(singular_value_matrix);
 
-    % tailNormAfterRank(r) is the Frobenius norm discarded after retaining
-    % the first r singular vectors. Build these norms backwards with hypot.
-    % This avoids subtracting two nearly equal accumulated energies when
-    % the requested squared tolerance is close to machine precision.
-    tailNormAfterRank = zeros(size(singularValues));
+    tail_norm_after_rank = zeros(size(svals));
 
-    for rankIndex = numel(singularValues)-1:-1:1
-        tailNormAfterRank(rankIndex) = hypot(singularValues(rankIndex + 1), tailNormAfterRank(rankIndex + 1));
+    for rank_index = numel(svals)-1:-1:1
+        tail_norm_after_rank(rank_index) = hypot(svals(rank_index + 1), tail_norm_after_rank(rank_index + 1));
     end
 
-    toleranceRank = find(tailNormAfterRank <= modeErrorThreshold, 1, 'first');
+    tolerance_rank = find(tail_norm_after_rank <= mode_error_threshold, 1, 'first');
 
-    if isempty(toleranceRank)
-        toleranceRank = numel(singularValues);
+    if isempty(tolerance_rank)
+        tolerance_rank = numel(svals);
     end
 
-    retainedRank = min(toleranceRank, maximumRanks(mode));
+    retained_rank = min(tolerance_rank, max_ranks(mode));
 
-    toleranceRanks(mode) = toleranceRank;
-    retainedRanks(mode) = retainedRank;
-    rankCapActiveByMode(mode) = retainedRank < toleranceRank;
-    discardedNorms(mode) = tailNormAfterRank(retainedRank);
-    discardedEnergy(mode) = discardedNorms(mode)^2;
+    tolerance_ranks(mode) = tolerance_rank;
+    retained_ranks(mode) = retained_rank;
+    rank_cap_active_by_mode(mode) = retained_rank < tolerance_rank;
+    discarded_norms(mode) = tail_norm_after_rank(retained_rank);
+    discarded_energy(mode) = discarded_norms(mode)^2;
 
-    factorMatrices{mode} = leftVectors(:, 1:retainedRank);
-    rankSelectionTimeByMode(mode) = toc(componentTimer);
+    factor_matrices{mode} = left_vectors(:, 1:retained_rank);
+    rank_selection_time_by_mode(mode) = toc(component_timer);
 
-    % Compress immediately so that the next unfolding is formed from the
-    % already reduced core.
-    componentTimer = tic;
-    workingCore = ttm(workingCore, factorMatrices{mode}.', mode);
-    projectionTimeByMode(mode) = toc(componentTimer);
+    component_timer = tic;
+    working_core = ttm(working_core, factor_matrices{mode}.', mode);
+    projection_time_by_mode(mode) = toc(component_timer);
 
 end
 
+T = ttensor(working_core, factor_matrices);
 
-%% 4. Return the Tucker tensor and error diagnostics
-
-T = ttensor(workingCore, factorMatrices);
-
-if inputNorm == 0
-    relativeErrorEstimate = 0;
+if norm_x == 0
+    relative_error_estimate = 0;
 else
-    relativeErrorEstimate = norm(discardedNorms) / inputNorm;
+    relative_error_estimate = norm(discarded_norms) / norm_x;
 end
 
-info.requested_tolerance = relativeTolerance;
-info.mode_error_threshold = modeErrorThreshold;
-info.mode_error_budget = modeErrorBudget;
-info.maximum_ranks = maximumRanks;
-info.tolerance_ranks = toleranceRanks;
-info.retained_ranks = retainedRanks;
-info.discarded_norm = discardedNorms;
-info.discarded_energy = discardedEnergy;
-info.relative_error_estimate = relativeErrorEstimate;
-info.rank_cap_active_by_mode = rankCapActiveByMode;
-info.rank_cap_active = any(rankCapActiveByMode);
-info.mode_order = modeOrder;
+info.requested_tolerance = tol;
+info.mode_error_threshold = mode_error_threshold;
+info.mode_error_budget = mode_error_budget;
+info.maximum_ranks = max_ranks;
+info.tolerance_ranks = tolerance_ranks;
+info.retained_ranks = retained_ranks;
+info.discarded_norm = discarded_norms;
+info.discarded_energy = discarded_energy;
+info.relative_error_estimate = relative_error_estimate;
+info.rank_cap_active_by_mode = rank_cap_active_by_mode;
+info.rank_cap_active = any(rank_cap_active_by_mode);
+info.mode_order = mode_order;
 
-kernelTiming = empty_tucker_kernel_timing();
-kernelTiming.sthosvd_unfolding_time_sec = sum(unfoldingTimeByMode);
-kernelTiming.sthosvd_svd_time_sec = sum(svdTimeByMode);
-kernelTiming.sthosvd_rank_selection_time_sec = ...
-    sum(rankSelectionTimeByMode);
-kernelTiming.sthosvd_projection_time_sec = sum(projectionTimeByMode);
+kernel_timing = empty_tucker_kernel_timing();
+kernel_timing.sthosvd_unfolding_time_sec = sum(unfolding_time_by_mode);
+kernel_timing.sthosvd_svd_time_sec = sum(svd_time_by_mode);
+kernel_timing.sthosvd_rank_selection_time_sec = ...
+    sum(rank_selection_time_by_mode);
+kernel_timing.sthosvd_projection_time_sec = sum(projection_time_by_mode);
 
-info.kernel_timing = kernelTiming;
-info.call_time_sec = toc(callTimer);
-info.unfolding_time_by_mode_sec = unfoldingTimeByMode;
-info.svd_time_by_mode_sec = svdTimeByMode;
-info.rank_selection_time_by_mode_sec = rankSelectionTimeByMode;
-info.projection_time_by_mode_sec = projectionTimeByMode;
+info.kernel_timing = kernel_timing;
+info.call_time_sec = toc(call_timer);
+info.unfolding_time_by_mode_sec = unfolding_time_by_mode;
+info.svd_time_by_mode_sec = svd_time_by_mode;
+info.rank_selection_time_by_mode_sec = rank_selection_time_by_mode;
+info.projection_time_by_mode_sec = projection_time_by_mode;
 
 end

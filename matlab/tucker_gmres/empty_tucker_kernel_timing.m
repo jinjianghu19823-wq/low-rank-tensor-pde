@@ -1,11 +1,5 @@
 function timing = empty_tucker_kernel_timing()
 %EMPTY_TUCKER_KERNEL_TIMING Return zeroed leaf-kernel timing fields.
-%
-% These fields describe leaf operations inside Tucker arithmetic. They are
-% intentionally separate from the non-overlapping solver-phase timings in
-% run_left_preconditioned_tucker_gmres_cycle. For example, STHOSVD SVD time
-% is already contained in a recompression call, so it must not be added to
-% the recompression phase again when reconstructing total solver time.
 
 timing.poisson_mode_product_time_sec = 0;
 timing.preconditioner_forward_dst_time_sec = 0;

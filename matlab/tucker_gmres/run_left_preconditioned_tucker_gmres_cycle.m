@@ -1,77 +1,11 @@
-function [U, info] = run_left_preconditioned_tucker_gmres_cycle(originalOperatorFunction, preconditionerFunction, F0, U0, ...
-    maximumIteration, targetTolerance, fixedCompressionTolerance, ...
-    toleranceMode, originalTrueResidualFunction, ...
-    preconditionedResidualNormFunction, displayProgress, ...
-    maximumBasisStorageEntries, maximumMultilinearRank, ...
-    relaxationErrorBudget, maximumRelaxedTolerance, ...
-    diagnosticIterations)
+function [U, info] = run_left_preconditioned_tucker_gmres_cycle(A, P, F0, U0, ...
+    maxit, tol, fixed_tol, ...
+    tol_mode, true_residual, ...
+    precond_residual, verbose, ...
+    max_basis_entries, max_rank, ...
+    relax_budget, max_relax_tol, ...
+    check_it)
 %RUN_LEFT_PRECONDITIONED_TUCKER_GMRES_CYCLE Run one Tucker-GMRES cycle.
-%
-% This shared cycle implements the same left-preconditioned Arnoldi process
-% for two controlled methods:
-%
-%   toleranceMode = "fixed"
-%       Use fixedCompressionTolerance in every recompression.
-%
-%   toleranceMode = "relaxed"
-%       Use the residual-based relaxation rule from Section 5.5. At step j,
-%       use
-%
-%           eta_j = relaxationErrorBudget ...
-%                   / (computedResidualNorm_{j-1} / beta).
-%
-%       The optional maximumRelaxedTolerance limits eta_j. Existing callers
-%       recover the uncapped thesis rule because relaxationErrorBudget
-%       defaults to targetTolerance and maximumRelaxedTolerance to 1-eps.
-%
-% The small Hessenberg residual controls the Arnoldi loop. After that loop
-% ends, the Tucker solution is assembled once. The original true residual
-% then decides convergence. The independently recomputed preconditioned
-% residual is a cycle-end diagnostic used to measure the residual gap.
-%
-% info.timing contains two levels. Its top-level phase fields are
-% non-overlapping and close back to solver_time_sec after adding
-% unclassified_solver_time_sec. info.timing.kernel contains nested leaf
-% timings such as QR, STHOSVD SVD, exact-core construction, Hadamard rank
-% multiplication, and DST transforms. info.timing.kernel_by_phase attributes
-% the same leaf timings to the operator, preconditioner, outer round,
-% Arnoldi subtraction, and solution assembly callers. The nested fields
-% explain a phase but must not be added to the phase timings again.
-%
-% Function-handle interfaces:
-%
-%   [Y, operationInfo] = originalOperatorFunction(X, tolerance, maxRanks)
-%   [Z, operationInfo] = preconditionerFunction(Y, tolerance, maxRanks)
-%
-% Both operations return Tucker tensors. Their operationInfo structures may
-% record local sequential-rounding errors and active rank caps.
-%
-% Thesis notation (Section 5.5, left-preconditioned relaxed Tucker-GMRES):
-%   originalOperatorFunction       <->  \mathcal A_0
-%   preconditionerFunction         <->  \mathcal P
-%   F0, U0, U                      <->  \mathcal B_0, \mathcal X_0, \mathcal X_j
-%   maximumIteration               <->  \ell_max (or m in the error bound)
-%   targetTolerance                <->  \varepsilon (internal residual threshold)
-%   fixedCompressionTolerance      <->  \eta in the fixed method
-%   relaxationErrorBudget          <->  \varepsilon in the \eta_j numerator
-%   maximumRelaxedTolerance        <->  \eta_max
-%   maximumMultilinearRank         <->  \boldsymbol R=(R_1,...,R_d)
-%   R0P, beta                      <->  \widetilde{\mathcal R}_0^P,
-%                                       ||\widetilde{\mathcal R}_0^P||_F
-%   V{j}, W                        <->  \mathcal V_j, recompressed A_P(V_j)
-%   eta                            <->  \eta_j
-%   H(1:j+1,1:j), y                <->  \bar H_j, y_j
-%   computedResidualNorm           <->  ||\widetilde r_j^P||_2
-%   originalTrueResidualFunction   <->  original true relative residual
-%   preconditionedResidualNormFunction
-%                                   <->  ||\mathcal P(\mathcal B_0-
-%                                            \mathcal A_0(\mathcal X))||_F
-% Here \mathcal A_P=\mathcal P\circ\mathcal A_0. The implementation normalises
-% computed and diagnostic preconditioned residuals by beta, the starting
-% preconditioned-residual norm.
-
-
-%% 1. Check the inputs
 
 if ~isa(F0, 'ttensor') || ~isa(U0, 'ttensor')
     error('F0 and U0 must be Tensor Toolbox ttensor objects.');
@@ -81,664 +15,634 @@ if ~isequal(size(F0), size(U0))
     error('F0 and U0 must have the same tensor dimensions.');
 end
 
-if maximumIteration < 1 || maximumIteration ~= floor(maximumIteration)
-    error('maximumIteration must be a positive integer.');
+if maxit < 1 || maxit ~= floor(maxit)
+    error('maxit must be a positive integer.');
 end
 
-if targetTolerance <= 0 || targetTolerance >= 1
-    error('targetTolerance must be between 0 and 1.');
+if tol <= 0 || tol >= 1
+    error('tol must be between 0 and 1.');
 end
 
-if fixedCompressionTolerance <= 0 || fixedCompressionTolerance >= 1
-    error('fixedCompressionTolerance must be between 0 and 1.');
+if fixed_tol <= 0 || fixed_tol >= 1
+    error('fixed_tol must be between 0 and 1.');
 end
 
 if nargin < 14
-    relaxationErrorBudget = targetTolerance;
+    relax_budget = tol;
 end
 
 if nargin < 15
-    maximumRelaxedTolerance = 1 - eps;
+    max_relax_tol = 1 - eps;
 end
 if nargin < 16
-    diagnosticIterations = [];
+    check_it = [];
 end
-diagnosticIterations = normalise_tucker_diagnostic_iterations( ...
-    diagnosticIterations, maximumIteration);
+check_it = normalise_tucker_diagnostic_iterations( ...
+    check_it, maxit);
 
-if relaxationErrorBudget <= 0 || relaxationErrorBudget >= 1
-    error('relaxationErrorBudget must be between 0 and 1.');
-end
-
-if maximumRelaxedTolerance <= 0 || maximumRelaxedTolerance >= 1
-    error('maximumRelaxedTolerance must be between 0 and 1.');
+if relax_budget <= 0 || relax_budget >= 1
+    error('relax_budget must be between 0 and 1.');
 end
 
-toleranceMode = lower(string(toleranceMode));
-
-if toleranceMode ~= "fixed" && toleranceMode ~= "relaxed"
-    error('toleranceMode must be "fixed" or "relaxed".');
+if max_relax_tol <= 0 || max_relax_tol >= 1
+    error('max_relax_tol must be between 0 and 1.');
 end
 
-if ~islogical(displayProgress) || ~isscalar(displayProgress)
-    error('displayProgress must be one logical value.');
+tol_mode = lower(string(tol_mode));
+
+if tol_mode ~= "fixed" && tol_mode ~= "relaxed"
+    error('tol_mode must be "fixed" or "relaxed".');
 end
 
-if maximumBasisStorageEntries <= 0
-    error('maximumBasisStorageEntries must be positive.');
+if ~islogical(verbose) || ~isscalar(verbose)
+    error('verbose must be one logical value.');
 end
 
-maximumRanks = normalise_tucker_rank_cap(maximumMultilinearRank, size(F0));
+if max_basis_entries <= 0
+    error('max_basis_entries must be positive.');
+end
 
-normF0 = norm(F0);
+max_ranks = normalise_tucker_rank_cap(max_rank, size(F0));
 
-if normF0 == 0
+norm_f0 = norm(F0);
+
+if norm_f0 == 0
     error('The original right-hand side F0 must be nonzero.');
 end
 
-if toleranceMode == "relaxed"
-    startingCompressionTolerance = min(relaxationErrorBudget, maximumRelaxedTolerance);
-    solutionCompressionTolerance = startingCompressionTolerance;
+if tol_mode == "relaxed"
+    starting_compression_tolerance = min(relax_budget, max_relax_tol);
+    solution_tol = starting_compression_tolerance;
 else
-    solutionCompressionTolerance = fixedCompressionTolerance;
-    startingCompressionTolerance = fixedCompressionTolerance;
+    solution_tol = fixed_tol;
+    starting_compression_tolerance = fixed_tol;
 end
 
+% Form the preconditioned starting residual
 
-%% 2. Form the preconditioned starting residual
+wall_timer = tic;
+solver_time = 0;
 
-wallTimer = tic;
-solverElapsed = 0;
+phase_timing.operator_application_time_sec = 0;
+phase_timing.preconditioner_application_time_sec = 0;
+phase_timing.outer_round_time_sec = 0;
+phase_timing.initial_residual_formation_time_sec = 0;
+phase_timing.orthogonalisation_inner_product_time_sec = 0;
+phase_timing.orthogonalisation_subtraction_round_time_sec = 0;
+phase_timing.small_least_squares_time_sec = 0;
+phase_timing.basis_normalisation_time_sec = 0;
+phase_timing.initial_basis_normalisation_time_sec = 0;
+phase_timing.solution_assembly_time_sec = 0;
+phase_timing.original_true_residual_time_sec = 0;
+phase_timing.preconditioned_residual_diagnostic_time_sec = 0;
 
-phaseTiming.operator_application_time_sec = 0;
-phaseTiming.preconditioner_application_time_sec = 0;
-phaseTiming.outer_round_time_sec = 0;
-phaseTiming.initial_residual_formation_time_sec = 0;
-phaseTiming.orthogonalisation_inner_product_time_sec = 0;
-phaseTiming.orthogonalisation_subtraction_round_time_sec = 0;
-phaseTiming.small_least_squares_time_sec = 0;
-phaseTiming.basis_normalisation_time_sec = 0;
-phaseTiming.initial_basis_normalisation_time_sec = 0;
-phaseTiming.solution_assembly_time_sec = 0;
-phaseTiming.original_true_residual_time_sec = 0;
-phaseTiming.preconditioned_residual_diagnostic_time_sec = 0;
+phase_timing.operator_application_history_sec = ...
+    zeros(maxit, 1);
+phase_timing.preconditioner_application_history_sec = ...
+    zeros(maxit, 1);
+phase_timing.outer_round_history_sec = zeros(maxit, 1);
+phase_timing.orthogonalisation_inner_product_history_sec = ...
+    zeros(maxit, 1);
+phase_timing.orthogonalisation_subtraction_round_history_sec = ...
+    zeros(maxit, 1);
+phase_timing.small_least_squares_history_sec = ...
+    zeros(maxit, 1);
+phase_timing.basis_normalisation_history_sec = ...
+    zeros(maxit, 1);
 
-phaseTiming.operator_application_history_sec = ...
-    zeros(maximumIteration, 1);
-phaseTiming.preconditioner_application_history_sec = ...
-    zeros(maximumIteration, 1);
-phaseTiming.outer_round_history_sec = zeros(maximumIteration, 1);
-phaseTiming.orthogonalisation_inner_product_history_sec = ...
-    zeros(maximumIteration, 1);
-phaseTiming.orthogonalisation_subtraction_round_history_sec = ...
-    zeros(maximumIteration, 1);
-phaseTiming.small_least_squares_history_sec = ...
-    zeros(maximumIteration, 1);
-phaseTiming.basis_normalisation_history_sec = ...
-    zeros(maximumIteration, 1);
+kernel_timing = empty_tucker_kernel_timing();
+phase_kernels = empty_phase_kernel_timing();
 
-kernelTiming = empty_tucker_kernel_timing();
-kernelTimingByPhase = empty_phase_kernel_timing();
+solver_timer = tic;
 
-solverTimer = tic;
-
-componentTimer = tic;
-[AU0, initialOperatorInfo] = originalOperatorFunction(U0, startingCompressionTolerance, maximumRanks);
-initialOperatorApplicationTime = toc(componentTimer);
-phaseTiming.operator_application_time_sec = ...
-    phaseTiming.operator_application_time_sec + ...
-    initialOperatorApplicationTime;
-kernelTiming = add_operation_kernel_timing( ...
-    kernelTiming, initialOperatorInfo);
-kernelTimingByPhase.operator_application = ...
+component_timer = tic;
+[AU0, initial_A_info] = A(U0, starting_compression_tolerance, max_ranks);
+initial_operator_application_time = toc(component_timer);
+phase_timing.operator_application_time_sec = ...
+    phase_timing.operator_application_time_sec + ...
+    initial_operator_application_time;
+kernel_timing = add_operation_kernel_timing( ...
+    kernel_timing, initial_A_info);
+phase_kernels.operator_application = ...
     add_operation_kernel_timing( ...
-        kernelTimingByPhase.operator_application, initialOperatorInfo);
+        phase_kernels.operator_application, initial_A_info);
 
-% Form B0-A0(U0) exactly in the represented Tucker subspaces. The
-% preconditioner action then performs its own controlled recompressions.
-componentTimer = tic;
-originalResidual = tucker_axpby_exact(F0, 1, AU0, -1);
-phaseTiming.initial_residual_formation_time_sec = toc(componentTimer);
+component_timer = tic;
+original_residual = tucker_axpby_exact(F0, 1, AU0, -1);
+phase_timing.initial_residual_formation_time_sec = toc(component_timer);
 
-componentTimer = tic;
-[preconditionedResidual, initialPreconditionerInfo] = preconditionerFunction(originalResidual, startingCompressionTolerance, maximumRanks);
-initialPreconditionerApplicationTime = toc(componentTimer);
-phaseTiming.preconditioner_application_time_sec = ...
-    phaseTiming.preconditioner_application_time_sec + ...
-    initialPreconditionerApplicationTime;
-kernelTiming = add_operation_kernel_timing( ...
-    kernelTiming, initialPreconditionerInfo);
-kernelTimingByPhase.preconditioner_application = ...
+component_timer = tic;
+[r_precond, initial_preconditioner_info] = P(original_residual, starting_compression_tolerance, max_ranks);
+initial_preconditioner_application_time = toc(component_timer);
+phase_timing.preconditioner_application_time_sec = ...
+    phase_timing.preconditioner_application_time_sec + ...
+    initial_preconditioner_application_time;
+kernel_timing = add_operation_kernel_timing( ...
+    kernel_timing, initial_preconditioner_info);
+phase_kernels.preconditioner_application = ...
     add_operation_kernel_timing( ...
-        kernelTimingByPhase.preconditioner_application, ...
-        initialPreconditionerInfo);
+        phase_kernels.preconditioner_application, ...
+        initial_preconditioner_info);
 
-componentTimer = tic;
-[R0P, initialOuterRoundInfo] = tucker_round(preconditionedResidual, startingCompressionTolerance, maximumRanks);
-initialOuterRoundTime = toc(componentTimer);
-phaseTiming.outer_round_time_sec = ...
-    phaseTiming.outer_round_time_sec + initialOuterRoundTime;
-kernelTiming = add_operation_kernel_timing( ...
-    kernelTiming, initialOuterRoundInfo);
-kernelTimingByPhase.outer_round = add_operation_kernel_timing( ...
-    kernelTimingByPhase.outer_round, initialOuterRoundInfo);
+component_timer = tic;
+[R0P, initial_outer_round_info] = tucker_round(r_precond, starting_compression_tolerance, max_ranks);
+initial_outer_round_time = toc(component_timer);
+phase_timing.outer_round_time_sec = ...
+    phase_timing.outer_round_time_sec + initial_outer_round_time;
+kernel_timing = add_operation_kernel_timing( ...
+    kernel_timing, initial_outer_round_info);
+phase_kernels.outer_round = add_operation_kernel_timing( ...
+    phase_kernels.outer_round, initial_outer_round_info);
 
 beta = norm(R0P);
-solverElapsed = solverElapsed + toc(solverTimer);
+solver_time = solver_time + toc(solver_timer);
 
-if beta <= 1e-14 * normF0
+if beta <= 1e-14 * norm_f0
     error(['The preconditioned starting residual is nearly zero. ', 'Use a more accurate preconditioner application or ', 'recompression tolerance.']);
 end
 
+% Evaluate the initial residuals independently
 
-%% 3. Evaluate the initial residuals independently
+diagnostic_timer = tic;
+true_res0 = true_residual(U0);
+initial_original_true_residual_time = toc(diagnostic_timer);
+phase_timing.original_true_residual_time_sec = ...
+    phase_timing.original_true_residual_time_sec + ...
+    initial_original_true_residual_time;
 
-diagnosticTimer = tic;
-initialOriginalTrueResidual = originalTrueResidualFunction(U0);
-initialOriginalTrueResidualTime = toc(diagnosticTimer);
-phaseTiming.original_true_residual_time_sec = ...
-    phaseTiming.original_true_residual_time_sec + ...
-    initialOriginalTrueResidualTime;
+diagnostic_timer = tic;
+beta0 = precond_residual(U0);
+initial_preconditioned_residual_diagnostic_time = toc(diagnostic_timer);
+phase_timing.preconditioned_residual_diagnostic_time_sec = ...
+    phase_timing.preconditioned_residual_diagnostic_time_sec + ...
+    initial_preconditioned_residual_diagnostic_time;
+diagnostic_time = phase_timing.original_true_residual_time_sec + ...
+    phase_timing.preconditioned_residual_diagnostic_time_sec;
 
-diagnosticTimer = tic;
-initialPreconditionedResidualNorm = preconditionedResidualNormFunction(U0);
-initialPreconditionedResidualDiagnosticTime = toc(diagnosticTimer);
-phaseTiming.preconditioned_residual_diagnostic_time_sec = ...
-    phaseTiming.preconditioned_residual_diagnostic_time_sec + ...
-    initialPreconditionedResidualDiagnosticTime;
-diagnosticElapsed = phaseTiming.original_true_residual_time_sec + ...
-    phaseTiming.preconditioned_residual_diagnostic_time_sec;
+phase_timing.initial_operator_application_time_sec = ...
+    initial_operator_application_time;
+phase_timing.initial_preconditioner_application_time_sec = ...
+    initial_preconditioner_application_time;
+phase_timing.initial_outer_round_time_sec = initial_outer_round_time;
+phase_timing.initial_original_true_residual_time_sec = ...
+    initial_original_true_residual_time;
+phase_timing.initial_preconditioned_residual_diagnostic_time_sec = ...
+    initial_preconditioned_residual_diagnostic_time;
 
-phaseTiming.initial_operator_application_time_sec = ...
-    initialOperatorApplicationTime;
-phaseTiming.initial_preconditioner_application_time_sec = ...
-    initialPreconditionerApplicationTime;
-phaseTiming.initial_outer_round_time_sec = initialOuterRoundTime;
-phaseTiming.initial_original_true_residual_time_sec = ...
-    initialOriginalTrueResidualTime;
-phaseTiming.initial_preconditioned_residual_diagnostic_time_sec = ...
-    initialPreconditionedResidualDiagnosticTime;
-
-if initialOriginalTrueResidual <= targetTolerance
+if true_res0 <= tol
 
     U = U0;
-    wallElapsed = toc(wallTimer);
-    info = empty_cycle_info(toleranceMode, maximumRanks, beta, initialOriginalTrueResidual, initialPreconditionedResidualNorm / beta, ...
-        solverElapsed, diagnosticElapsed, wallElapsed, ...
-        targetTolerance, fixedCompressionTolerance, ...
-        relaxationErrorBudget, maximumRelaxedTolerance);
+    wall_time = toc(wall_timer);
+    info = empty_cycle_info(tol_mode, max_ranks, beta, true_res0, beta0 / beta, ...
+        solver_time, diagnostic_time, wall_time, ...
+        tol, fixed_tol, ...
+        relax_budget, max_relax_tol);
     info.timing = finalise_cycle_timing( ...
-        phaseTiming, 0, solverElapsed, diagnosticElapsed, ...
-        wallElapsed, kernelTiming, kernelTimingByPhase);
+        phase_timing, 0, solver_time, diagnostic_time, ...
+        wall_time, kernel_timing, phase_kernels);
     return
 
 end
 
+% Prepare the Arnoldi basis and histories
 
-%% 4. Prepare the Arnoldi basis and histories
+d = ndims(F0);
 
-numberOfModes = ndims(F0);
+V = cell(maxit + 1, 1);
+H = zeros(maxit + 1, maxit);
 
-V = cell(maximumIteration + 1, 1);
-H = zeros(maximumIteration + 1, maximumIteration);
+true_res_hist = true_res0;
+true_res_it = 0;
+true_preconditioned_relative_residual_history = beta0 / beta;
+true_preconditioned_residual_iteration = 0;
+res_hist = zeros(maxit, 1);
+eta_history = zeros(maxit, 1);
 
-originalTrueResidualHistory = initialOriginalTrueResidual;
-originalTrueResidualIteration = 0;
-truePreconditionedRelativeResidualHistory = initialPreconditionedResidualNorm / beta;
-truePreconditionedResidualIteration = 0;
-computedPreconditionedRelativeResidualHistory = zeros(maximumIteration, 1);
-etaHistory = zeros(maximumIteration, 1);
+basis_ranks = zeros(maxit + 1, d);
+basis_storage = zeros(maxit + 1, 1);
 
-basisRanks = zeros(maximumIteration + 1, numberOfModes);
-basisStorageHistory = zeros(maximumIteration + 1, 1);
+solver_time_history = zeros(maxit, 1);
+diagnostic_time_history = zeros(maxit, 1);
+wall_time_history = zeros(maxit, 1);
 
-solverTimeHistory = zeros(maximumIteration, 1);
-diagnosticTimeHistory = zeros(maximumIteration, 1);
-wallTimeHistory = zeros(maximumIteration, 1);
+cap_hist = false(maxit, 1);
+operator_product_maximum_local_error_history = zeros(maxit, 1);
+orthogonalisation_maximum_local_error_history = zeros(maxit, 1);
+solution_maximum_local_error_history = zeros(maxit, 1);
 
-rankCapActiveHistory = false(maximumIteration, 1);
-operatorProductMaximumLocalErrorHistory = zeros(maximumIteration, 1);
-orthogonalisationMaximumLocalErrorHistory = zeros(maximumIteration, 1);
-solutionMaximumLocalErrorHistory = zeros(maximumIteration, 1);
-
-solverTimer = tic;
+solver_timer = tic;
 V{1} = (1 / beta) * R0P;
-phaseTiming.initial_basis_normalisation_time_sec = toc(solverTimer);
-phaseTiming.basis_normalisation_time_sec = ...
-    phaseTiming.basis_normalisation_time_sec + ...
-    phaseTiming.initial_basis_normalisation_time_sec;
-solverElapsed = solverElapsed + ...
-    phaseTiming.initial_basis_normalisation_time_sec;
-basisRanks(1, :) = size(V{1}.core);
-basisStorageHistory(1) = tucker_entries_from_rank_local(size(F0), basisRanks(1, :));
+phase_timing.initial_basis_normalisation_time_sec = toc(solver_timer);
+phase_timing.basis_normalisation_time_sec = ...
+    phase_timing.basis_normalisation_time_sec + ...
+    phase_timing.initial_basis_normalisation_time_sec;
+solver_time = solver_time + ...
+    phase_timing.initial_basis_normalisation_time_sec;
+basis_ranks(1, :) = size(V{1}.core);
+basis_storage(1) = tucker_entries_from_rank_local(size(F0), basis_ranks(1, :));
 
-if basisStorageHistory(1) > maximumBasisStorageEntries
+if basis_storage(1) > max_basis_entries
     error('The initial Tucker basis exceeds the storage safety limit.');
 end
 
-computedResidualNormPrevious = beta;
-basisMemoryLimitReached = false;
-cycleStoppedOnComputedResidual = false;
-stopReason = "iteration_limit";
+computed_residual_norm_previous = beta;
+basis_limit_reached = false;
+cycle_stopped_on_computed_residual = false;
+stop_reason = "iteration_limit";
 
-[initialCapActive, initialLocalError] = summarise_operation_info(initialOperatorInfo, initialPreconditionerInfo, initialOuterRoundInfo);
+[initial_cap_active, initial_local_error] = summarise_operation_info(initial_A_info, initial_preconditioner_info, initial_outer_round_info);
 
+% Run the left-preconditioned Arnoldi cycle
 
-%% 5. Run the left-preconditioned Arnoldi cycle
+for j = 1:maxit
 
-for j = 1:maximumIteration
+    if tol_mode == "relaxed"
 
-    if toleranceMode == "relaxed"
+        previous_relative_residual = computed_residual_norm_previous / beta;
 
-        previousRelativeResidual = computedResidualNormPrevious / beta;
+        eta = relax_budget / previous_relative_residual;
 
-        eta = relaxationErrorBudget / previousRelativeResidual;
-
-        eta = min([eta, maximumRelaxedTolerance, 1 - eps]);
+        eta = min([eta, max_relax_tol, 1 - eps]);
 
     else
-        eta = fixedCompressionTolerance;
+        eta = fixed_tol;
     end
 
-    etaHistory(j) = eta;
-    solverTimer = tic;
+    eta_history(j) = eta;
+    solver_timer = tic;
 
+% Apply the recompressed preconditioned operator product
 
-    %% 5a. Apply the recompressed preconditioned operator product
-
-    componentTimer = tic;
-    [A0V, operatorInfo] = originalOperatorFunction(V{j}, eta, maximumRanks);
-    oneOperatorApplicationTime = toc(componentTimer);
-    phaseTiming.operator_application_time_sec = ...
-        phaseTiming.operator_application_time_sec + ...
-        oneOperatorApplicationTime;
-    phaseTiming.operator_application_history_sec(j) = ...
-        oneOperatorApplicationTime;
-    kernelTiming = add_operation_kernel_timing( ...
-        kernelTiming, operatorInfo);
-    kernelTimingByPhase.operator_application = ...
+    component_timer = tic;
+    [A0V, A_info] = A(V{j}, eta, max_ranks);
+    one_operator_application_time = toc(component_timer);
+    phase_timing.operator_application_time_sec = ...
+        phase_timing.operator_application_time_sec + ...
+        one_operator_application_time;
+    phase_timing.operator_application_history_sec(j) = ...
+        one_operator_application_time;
+    kernel_timing = add_operation_kernel_timing( ...
+        kernel_timing, A_info);
+    phase_kernels.operator_application = ...
         add_operation_kernel_timing( ...
-            kernelTimingByPhase.operator_application, operatorInfo);
+            phase_kernels.operator_application, A_info);
 
-    componentTimer = tic;
-    [preconditionedProduct, preconditionerInfo] = preconditionerFunction(A0V, eta, maximumRanks);
-    onePreconditionerApplicationTime = toc(componentTimer);
-    phaseTiming.preconditioner_application_time_sec = ...
-        phaseTiming.preconditioner_application_time_sec + ...
-        onePreconditionerApplicationTime;
-    phaseTiming.preconditioner_application_history_sec(j) = ...
-        onePreconditionerApplicationTime;
-    kernelTiming = add_operation_kernel_timing( ...
-        kernelTiming, preconditionerInfo);
-    kernelTimingByPhase.preconditioner_application = ...
+    component_timer = tic;
+    [preconditioned_product, preconditioner_info] = P(A0V, eta, max_ranks);
+    one_preconditioner_application_time = toc(component_timer);
+    phase_timing.preconditioner_application_time_sec = ...
+        phase_timing.preconditioner_application_time_sec + ...
+        one_preconditioner_application_time;
+    phase_timing.preconditioner_application_history_sec(j) = ...
+        one_preconditioner_application_time;
+    kernel_timing = add_operation_kernel_timing( ...
+        kernel_timing, preconditioner_info);
+    phase_kernels.preconditioner_application = ...
         add_operation_kernel_timing( ...
-            kernelTimingByPhase.preconditioner_application, ...
-            preconditionerInfo);
+            phase_kernels.preconditioner_application, ...
+            preconditioner_info);
 
-    componentTimer = tic;
-    [W, productRoundInfo] = tucker_round(preconditionedProduct, eta, maximumRanks);
-    oneOuterRoundTime = toc(componentTimer);
-    phaseTiming.outer_round_time_sec = ...
-        phaseTiming.outer_round_time_sec + oneOuterRoundTime;
-    phaseTiming.outer_round_history_sec(j) = oneOuterRoundTime;
-    kernelTiming = add_operation_kernel_timing( ...
-        kernelTiming, productRoundInfo);
-    kernelTimingByPhase.outer_round = add_operation_kernel_timing( ...
-        kernelTimingByPhase.outer_round, productRoundInfo);
+    component_timer = tic;
+    [W, product_round_info] = tucker_round(preconditioned_product, eta, max_ranks);
+    one_outer_round_time = toc(component_timer);
+    phase_timing.outer_round_time_sec = ...
+        phase_timing.outer_round_time_sec + one_outer_round_time;
+    phase_timing.outer_round_history_sec(j) = one_outer_round_time;
+    kernel_timing = add_operation_kernel_timing( ...
+        kernel_timing, product_round_info);
+    phase_kernels.outer_round = add_operation_kernel_timing( ...
+        phase_kernels.outer_round, product_round_info);
 
-    arnoldiProductNorm = norm(W);
+    arnoldi_product_norm = norm(W);
 
-    [productCapActive, productLocalError] = summarise_operation_info(operatorInfo, preconditionerInfo, productRoundInfo);
+    [product_cap_active, product_local_error] = summarise_operation_info(A_info, preconditioner_info, product_round_info);
 
-    rankCapActiveHistory(j) = productCapActive;
-    operatorProductMaximumLocalErrorHistory(j) = productLocalError;
+    cap_hist(j) = product_cap_active;
+    operator_product_maximum_local_error_history(j) = product_local_error;
 
-
-    %% 5b. Perform one modified Gram--Schmidt pass
+% Perform one modified Gram--Schmidt pass
 
     for i = 1:j
 
-        componentTimer = tic;
+        component_timer = tic;
         correction = innerprod(V{i}, W);
-        oneInnerProductTime = toc(componentTimer);
-        phaseTiming.orthogonalisation_inner_product_time_sec = ...
-            phaseTiming.orthogonalisation_inner_product_time_sec + ...
-            oneInnerProductTime;
-        phaseTiming.orthogonalisation_inner_product_history_sec(j) = ...
-            phaseTiming.orthogonalisation_inner_product_history_sec(j) + ...
-            oneInnerProductTime;
+        one_inner_product_time = toc(component_timer);
+        phase_timing.orthogonalisation_inner_product_time_sec = ...
+            phase_timing.orthogonalisation_inner_product_time_sec + ...
+            one_inner_product_time;
+        phase_timing.orthogonalisation_inner_product_history_sec(j) = ...
+            phase_timing.orthogonalisation_inner_product_history_sec(j) + ...
+            one_inner_product_time;
 
         H(i, j) = correction;
 
-        componentTimer = tic;
-        [W, subtractionInfo] = tucker_axpby_round(W, 1, V{i}, -correction, eta, maximumRanks);
-        oneSubtractionRoundTime = toc(componentTimer);
-        phaseTiming.orthogonalisation_subtraction_round_time_sec = ...
-            phaseTiming.orthogonalisation_subtraction_round_time_sec + ...
-            oneSubtractionRoundTime;
-        phaseTiming.orthogonalisation_subtraction_round_history_sec(j) = ...
-            phaseTiming.orthogonalisation_subtraction_round_history_sec(j) + ...
-            oneSubtractionRoundTime;
-        kernelTiming = add_operation_kernel_timing( ...
-            kernelTiming, subtractionInfo);
-        kernelTimingByPhase.orthogonalisation_subtraction_and_round = ...
+        component_timer = tic;
+        [W, subtraction_info] = tucker_axpby_round(W, 1, V{i}, -correction, eta, max_ranks);
+        one_subtraction_round_time = toc(component_timer);
+        phase_timing.orthogonalisation_subtraction_round_time_sec = ...
+            phase_timing.orthogonalisation_subtraction_round_time_sec + ...
+            one_subtraction_round_time;
+        phase_timing.orthogonalisation_subtraction_round_history_sec(j) = ...
+            phase_timing.orthogonalisation_subtraction_round_history_sec(j) + ...
+            one_subtraction_round_time;
+        kernel_timing = add_operation_kernel_timing( ...
+            kernel_timing, subtraction_info);
+        phase_kernels.orthogonalisation_subtraction_and_round = ...
             add_operation_kernel_timing( ...
-                kernelTimingByPhase.orthogonalisation_subtraction_and_round, ...
-                subtractionInfo);
+                phase_kernels.orthogonalisation_subtraction_and_round, ...
+                subtraction_info);
 
-        rankCapActiveHistory(j) = rankCapActiveHistory(j) || subtractionInfo.rank_cap_active;
+        cap_hist(j) = cap_hist(j) || subtraction_info.rank_cap_active;
 
-        orthogonalisationMaximumLocalErrorHistory(j) = max(orthogonalisationMaximumLocalErrorHistory(j), subtractionInfo.relative_error_estimate);
+        orthogonalisation_maximum_local_error_history(j) = max(orthogonalisation_maximum_local_error_history(j), subtraction_info.relative_error_estimate);
 
     end
 
-
-    %% 5c. Form the Hessenberg problem
+% Form the Hessenberg problem
 
     H(j + 1, j) = norm(W);
 
-    % Implementation safeguard, not a theorem in Section 5.5: if the
-    % remaining direction is no larger than the requested recompression
-    % accuracy, normalising it could turn truncation noise into a new basis
-    % tensor. The factors 100 and max(1,arnoldiProductNorm) are conservative
-    % numerical scaling choices, not constants from the inexact-GMRES bound.
-    breakdownThreshold = max(100 * eps, eta) * max(1, arnoldiProductNorm);
-    numericalArnoldiBreakdown = H(j + 1, j) <= breakdownThreshold;
+    breakdown_threshold = max(100 * eps, eta) * max(1, arnoldi_product_norm);
+    numerical_arnoldi_breakdown = H(j + 1, j) <= breakdown_threshold;
 
-    if numericalArnoldiBreakdown
+    if numerical_arnoldi_breakdown
         H(j + 1, j) = 0;
     end
 
-    basisRanks(j + 1, :) = size(W.core);
-    basisStorageHistory(j + 1) = basisStorageHistory(j) + tucker_entries_from_rank_local(size(F0), basisRanks(j + 1, :));
+    basis_ranks(j + 1, :) = size(W.core);
+    basis_storage(j + 1) = basis_storage(j) + tucker_entries_from_rank_local(size(F0), basis_ranks(j + 1, :));
 
-    if basisStorageHistory(j + 1) > maximumBasisStorageEntries
-        basisMemoryLimitReached = true;
+    if basis_storage(j + 1) > max_basis_entries
+        basis_limit_reached = true;
     end
 
-    componentTimer = tic;
-    smallRightHandSide = zeros(j + 1, 1);
-    smallRightHandSide(1) = beta;
+    component_timer = tic;
+    rhs = zeros(j + 1, 1);
+    rhs(1) = beta;
 
-    % The algorithm asks for a least-squares minimiser. Lsqminnorm also
-    % returns a well-defined minimum-norm solution when the small
-    % Hessenberg matrix is numerically rank deficient.
-    y = lsqminnorm(H(1:j + 1, 1:j), smallRightHandSide, sqrt(eps));
-    smallResidual = smallRightHandSide - H(1:j + 1, 1:j) * y;
-    computedResidualNorm = norm(smallResidual);
+    y = lsqminnorm(H(1:j + 1, 1:j), rhs, sqrt(eps));
+    small_residual = rhs - H(1:j + 1, 1:j) * y;
+    computed_residual_norm = norm(small_residual);
 
-    oneSmallLeastSquaresTime = toc(componentTimer);
-    phaseTiming.small_least_squares_time_sec = ...
-        phaseTiming.small_least_squares_time_sec + ...
-        oneSmallLeastSquaresTime;
-    phaseTiming.small_least_squares_history_sec(j) = ...
-        oneSmallLeastSquaresTime;
+    one_small_least_squares_time = toc(component_timer);
+    phase_timing.small_least_squares_time_sec = ...
+        phase_timing.small_least_squares_time_sec + ...
+        one_small_least_squares_time;
+    phase_timing.small_least_squares_history_sec(j) = ...
+        one_small_least_squares_time;
 
-    computedPreconditionedRelativeResidualHistory(j) = computedResidualNorm / beta;
+    res_hist(j) = computed_residual_norm / beta;
 
+    solver_time = solver_time + toc(solver_timer);
 
-    solverElapsed = solverElapsed + toc(solverTimer);
-
-    if any(diagnosticIterations == j)
-        diagnosticTimer = tic;
-        diagnosticSolution = U0;
-        for diagnosticBasisIndex = 1:j
-            diagnosticSolution = tucker_axpby_round( ...
-                diagnosticSolution, 1, V{diagnosticBasisIndex}, ...
-                y(diagnosticBasisIndex), ...
-                solutionCompressionTolerance, maximumRanks);
+    if any(check_it == j)
+        diagnostic_timer = tic;
+        U_check = U0;
+        for diagnostic_basis_index = 1:j
+            U_check = tucker_axpby_round( ...
+                U_check, 1, V{diagnostic_basis_index}, ...
+                y(diagnostic_basis_index), ...
+                solution_tol, max_ranks);
         end
-        checkpointTrueResidual = ...
-            originalTrueResidualFunction(diagnosticSolution);
-        diagnosticElapsed = diagnosticElapsed + toc(diagnosticTimer);
-        originalTrueResidualHistory = ...
-            [originalTrueResidualHistory; checkpointTrueResidual]; %#ok<AGROW>
-        originalTrueResidualIteration = ...
-            [originalTrueResidualIteration; j]; %#ok<AGROW>
-        clear diagnosticSolution
+        check_res = ...
+            true_residual(U_check);
+        diagnostic_time = diagnostic_time + toc(diagnostic_timer);
+        true_res_hist = ...
+            [true_res_hist; check_res]; %#ok<AGROW>
+        true_res_it = ...
+            [true_res_it; j]; %#ok<AGROW>
+        clear U_check
     end
 
+    solver_time_history(j) = solver_time;
+    diagnostic_time_history(j) = diagnostic_time;
+    wall_time_history(j) = toc(wall_timer);
 
-    solverTimeHistory(j) = solverElapsed;
-    diagnosticTimeHistory(j) = diagnosticElapsed;
-    wallTimeHistory(j) = toc(wallTimer);
-
-    if displayProgress
+    if verbose
         fprintf([ ...
             'Iteration %3d: eta = %.3e, computed preconditioned ', ...
             'residual = %.3e\n'], ...
             j, eta, ...
-            computedPreconditionedRelativeResidualHistory(j));
+            res_hist(j));
     end
 
-
-    %% 5d. Apply the stopping and safety tests
-
-    if computedPreconditionedRelativeResidualHistory(j) <= targetTolerance
-        cycleStoppedOnComputedResidual = true;
-        stopReason = "computed_preconditioned_target";
+    if res_hist(j) <= tol
+        cycle_stopped_on_computed_residual = true;
+        stop_reason = "computed_preconditioned_target";
         break
     end
 
-    if computedPreconditionedRelativeResidualHistory(j) <= 100 * eps
-        cycleStoppedOnComputedResidual = true;
-        stopReason = "computed_preconditioned_floor";
+    if res_hist(j) <= 100 * eps
+        cycle_stopped_on_computed_residual = true;
+        stop_reason = "computed_preconditioned_floor";
         break
     end
 
-    if basisMemoryLimitReached
-        stopReason = "basis_memory";
+    if basis_limit_reached
+        stop_reason = "basis_memory";
         break
     end
 
-    if numericalArnoldiBreakdown
-        stopReason = "arnoldi_breakdown";
+    if numerical_arnoldi_breakdown
+        stop_reason = "arnoldi_breakdown";
         break
     end
 
-    solverTimer = tic;
+    solver_timer = tic;
     V{j + 1} = (1 / H(j + 1, j)) * W;
-    oneBasisNormalisationTime = toc(solverTimer);
-    phaseTiming.basis_normalisation_time_sec = ...
-        phaseTiming.basis_normalisation_time_sec + ...
-        oneBasisNormalisationTime;
-    phaseTiming.basis_normalisation_history_sec(j) = ...
-        oneBasisNormalisationTime;
-    solverElapsed = solverElapsed + oneBasisNormalisationTime;
-    solverTimeHistory(j) = solverElapsed;
-    wallTimeHistory(j) = toc(wallTimer);
-    computedResidualNormPrevious = computedResidualNorm;
+    one_basis_normalisation_time = toc(solver_timer);
+    phase_timing.basis_normalisation_time_sec = ...
+        phase_timing.basis_normalisation_time_sec + ...
+        one_basis_normalisation_time;
+    phase_timing.basis_normalisation_history_sec(j) = ...
+        one_basis_normalisation_time;
+    solver_time = solver_time + one_basis_normalisation_time;
+    solver_time_history(j) = solver_time;
+    wall_time_history(j) = toc(wall_timer);
+    computed_residual_norm_previous = computed_residual_norm;
 
 end
 
+% Assemble the Tucker solution once
 
-%% 6. Assemble the Tucker solution once
-
-numberOfCompletedIterations = j;
-solverTimer = tic;
+niter_done = j;
+solver_timer = tic;
 U = U0;
 
-for i = 1:numberOfCompletedIterations
+for i = 1:niter_done
 
-    [U, solutionAdditionInfo] = tucker_axpby_round(U, 1, V{i}, y(i), solutionCompressionTolerance, maximumRanks);
-    kernelTiming = add_operation_kernel_timing( ...
-        kernelTiming, solutionAdditionInfo);
-    kernelTimingByPhase.solution_assembly = ...
+    [U, solution_addition_info] = tucker_axpby_round(U, 1, V{i}, y(i), solution_tol, max_ranks);
+    kernel_timing = add_operation_kernel_timing( ...
+        kernel_timing, solution_addition_info);
+    phase_kernels.solution_assembly = ...
         add_operation_kernel_timing( ...
-            kernelTimingByPhase.solution_assembly, solutionAdditionInfo);
+            phase_kernels.solution_assembly, solution_addition_info);
 
-    rankCapActiveHistory(numberOfCompletedIterations) = rankCapActiveHistory(numberOfCompletedIterations) || solutionAdditionInfo.rank_cap_active;
+    cap_hist(niter_done) = cap_hist(niter_done) || solution_addition_info.rank_cap_active;
 
-    solutionMaximumLocalErrorHistory(numberOfCompletedIterations) = max(solutionMaximumLocalErrorHistory(numberOfCompletedIterations), solutionAdditionInfo.relative_error_estimate);
+    solution_maximum_local_error_history(niter_done) = max(solution_maximum_local_error_history(niter_done), solution_addition_info.relative_error_estimate);
 
 end
 
-solutionRanks = size(U.core);
-solutionRankIteration = numberOfCompletedIterations;
-phaseTiming.solution_assembly_time_sec = toc(solverTimer);
-solverElapsed = solverElapsed + phaseTiming.solution_assembly_time_sec;
+solution_ranks = size(U.core);
+solution_rank_iteration = niter_done;
+phase_timing.solution_assembly_time_sec = toc(solver_timer);
+solver_time = solver_time + phase_timing.solution_assembly_time_sec;
 
+% Recompute both cycle-end residuals independently
 
-%% 7. Recompute both cycle-end residuals independently
+diagnostic_timer = tic;
+final_true_res = true_residual(U);
+final_original_true_residual_time = toc(diagnostic_timer);
+phase_timing.original_true_residual_time_sec = ...
+    phase_timing.original_true_residual_time_sec + ...
+    final_original_true_residual_time;
 
-diagnosticTimer = tic;
-finalOriginalTrueResidual = originalTrueResidualFunction(U);
-finalOriginalTrueResidualTime = toc(diagnosticTimer);
-phaseTiming.original_true_residual_time_sec = ...
-    phaseTiming.original_true_residual_time_sec + ...
-    finalOriginalTrueResidualTime;
+diagnostic_timer = tic;
+final_preconditioned_residual_norm = precond_residual(U);
+final_preconditioned_residual_diagnostic_time = toc(diagnostic_timer);
+phase_timing.preconditioned_residual_diagnostic_time_sec = ...
+    phase_timing.preconditioned_residual_diagnostic_time_sec + ...
+    final_preconditioned_residual_diagnostic_time;
 
-diagnosticTimer = tic;
-finalPreconditionedResidualNorm = preconditionedResidualNormFunction(U);
-finalPreconditionedResidualDiagnosticTime = toc(diagnosticTimer);
-phaseTiming.preconditioned_residual_diagnostic_time_sec = ...
-    phaseTiming.preconditioned_residual_diagnostic_time_sec + ...
-    finalPreconditionedResidualDiagnosticTime;
+final_true_preconditioned_relative_residual = final_preconditioned_residual_norm / beta;
 
-finalTruePreconditionedRelativeResidual = finalPreconditionedResidualNorm / beta;
+diagnostic_time = phase_timing.original_true_residual_time_sec + ...
+    phase_timing.preconditioned_residual_diagnostic_time_sec;
 
-diagnosticElapsed = phaseTiming.original_true_residual_time_sec + ...
-    phaseTiming.preconditioned_residual_diagnostic_time_sec;
-
-if originalTrueResidualIteration(end) == numberOfCompletedIterations
-    originalTrueResidualHistory(end) = finalOriginalTrueResidual;
+if true_res_it(end) == niter_done
+    true_res_hist(end) = final_true_res;
 else
-    originalTrueResidualHistory = ...
-        [originalTrueResidualHistory; finalOriginalTrueResidual];
-    originalTrueResidualIteration = ...
-        [originalTrueResidualIteration; numberOfCompletedIterations];
+    true_res_hist = ...
+        [true_res_hist; final_true_res];
+    true_res_it = ...
+        [true_res_it; niter_done];
 end
-truePreconditionedRelativeResidualHistory = [truePreconditionedRelativeResidualHistory; finalTruePreconditionedRelativeResidual];
-truePreconditionedResidualIteration = [truePreconditionedResidualIteration; numberOfCompletedIterations];
+true_preconditioned_relative_residual_history = [true_preconditioned_relative_residual_history; final_true_preconditioned_relative_residual];
+true_preconditioned_residual_iteration = [true_preconditioned_residual_iteration; niter_done];
 
-preconditionedResidualGap = abs(finalTruePreconditionedRelativeResidual - computedPreconditionedRelativeResidualHistory(numberOfCompletedIterations));
+preconditioned_residual_gap = abs(final_true_preconditioned_relative_residual - res_hist(niter_done));
 
-solverTimeHistory(numberOfCompletedIterations) = solverElapsed;
-diagnosticTimeHistory(numberOfCompletedIterations) = diagnosticElapsed;
-wallTimeHistory(numberOfCompletedIterations) = toc(wallTimer);
+solver_time_history(niter_done) = solver_time;
+diagnostic_time_history(niter_done) = diagnostic_time;
+wall_time_history(niter_done) = toc(wall_timer);
 
-if displayProgress
+if verbose
     fprintf([ ...
         'Cycle complete at iteration %d: computed preconditioned ', ...
         'residual = %.3e, original true residual = %.3e\n'], ...
-        numberOfCompletedIterations, ...
-        computedPreconditionedRelativeResidualHistory( ...
-            numberOfCompletedIterations), ...
-        finalOriginalTrueResidual);
+        niter_done, ...
+        res_hist( ...
+            niter_done), ...
+        final_true_res);
 end
 
-
-%% 8. Collect the cycle diagnostics
-
-info.iterations = numberOfCompletedIterations;
-info.converged = finalOriginalTrueResidual <= targetTolerance;
-info.stop_reason = stopReason;
-info.tolerance_mode = toleranceMode;
-info.target_tolerance = targetTolerance;
-info.fixed_compression_tolerance = fixedCompressionTolerance;
-info.relaxation_error_budget = relaxationErrorBudget;
-info.maximum_relaxed_tolerance = maximumRelaxedTolerance;
-info.maximum_multilinear_rank = maximumRanks;
+info.iterations = niter_done;
+info.converged = final_true_res <= tol;
+info.stop_reason = stop_reason;
+info.tolerance_mode = tol_mode;
+info.target_tolerance = tol;
+info.fixed_compression_tolerance = fixed_tol;
+info.relaxation_error_budget = relax_budget;
+info.maximum_relaxed_tolerance = max_relax_tol;
+info.maximum_multilinear_rank = max_ranks;
 info.cycle_starting_preconditioned_residual_norm = beta;
 
 info.true_relative_residual = ...
-    originalTrueResidualHistory;
-info.true_residual_iteration = originalTrueResidualIteration;
+    true_res_hist;
+info.true_residual_iteration = true_res_it;
 info.true_preconditioned_relative_residual = ...
-    truePreconditionedRelativeResidualHistory;
+    true_preconditioned_relative_residual_history;
 info.true_preconditioned_residual_iteration = ...
-    truePreconditionedResidualIteration;
+    true_preconditioned_residual_iteration;
 info.computed_preconditioned_relative_residual = ...
-    computedPreconditionedRelativeResidualHistory( ...
-        1:numberOfCompletedIterations);
-info.preconditioned_residual_gap = preconditionedResidualGap;
+    res_hist( ...
+        1:niter_done);
+info.preconditioned_residual_gap = preconditioned_residual_gap;
 info.preconditioned_residual_gap_iteration = ...
-    numberOfCompletedIterations;
-info.eta = etaHistory(1:numberOfCompletedIterations);
+    niter_done;
+info.eta = eta_history(1:niter_done);
 
-info.solution_ranks = solutionRanks;
-info.solution_rank_iteration = solutionRankIteration;
+info.solution_ranks = solution_ranks;
+info.solution_rank_iteration = solution_rank_iteration;
 info.basis_ranks = ...
-    basisRanks(1:numberOfCompletedIterations + 1, :);
+    basis_ranks(1:niter_done + 1, :);
 info.basis_storage_history_entries = ...
-    basisStorageHistory(1:numberOfCompletedIterations + 1);
+    basis_storage(1:niter_done + 1);
 info.peak_basis_storage_entries = ...
     max(info.basis_storage_history_entries);
 
-info.H = H(1:numberOfCompletedIterations + 1, ...
-    1:numberOfCompletedIterations);
+info.H = H(1:niter_done + 1, ...
+    1:niter_done);
 info.y = y;
 
 info.rank_cap_active_history = ...
-    rankCapActiveHistory(1:numberOfCompletedIterations);
-info.rank_cap_active = initialCapActive || ...
+    cap_hist(1:niter_done);
+info.rank_cap_active = initial_cap_active || ...
     any(info.rank_cap_active_history);
-info.initial_maximum_local_recompression_error = initialLocalError;
+info.initial_maximum_local_recompression_error = initial_local_error;
 info.operator_product_maximum_local_recompression_error = ...
-    operatorProductMaximumLocalErrorHistory( ...
-        1:numberOfCompletedIterations);
+    operator_product_maximum_local_error_history( ...
+        1:niter_done);
 info.orthogonalisation_maximum_local_recompression_error = ...
-    orthogonalisationMaximumLocalErrorHistory( ...
-        1:numberOfCompletedIterations);
+    orthogonalisation_maximum_local_error_history( ...
+        1:niter_done);
 info.solution_maximum_local_recompression_error = ...
-    solutionMaximumLocalErrorHistory( ...
-        1:numberOfCompletedIterations);
+    solution_maximum_local_error_history( ...
+        1:niter_done);
 
-info.stopped_for_basis_memory = basisMemoryLimitReached;
+info.stopped_for_basis_memory = basis_limit_reached;
 info.cycle_stopped_on_computed_residual = ...
-    cycleStoppedOnComputedResidual;
+    cycle_stopped_on_computed_residual;
 info.orthogonalisation_passes = 1;
 
 info.solver_time_history_sec = ...
-    solverTimeHistory(1:numberOfCompletedIterations);
+    solver_time_history(1:niter_done);
 info.diagnostic_time_history_sec = ...
-    diagnosticTimeHistory(1:numberOfCompletedIterations);
+    diagnostic_time_history(1:niter_done);
 info.wall_time_history_sec = ...
-    wallTimeHistory(1:numberOfCompletedIterations);
-info.solver_time_sec = solverElapsed;
-info.diagnostic_time_sec = diagnosticElapsed;
-wallElapsed = toc(wallTimer);
-info.wall_time_sec = wallElapsed;
+    wall_time_history(1:niter_done);
+info.solver_time_sec = solver_time;
+info.diagnostic_time_sec = diagnostic_time;
+wall_time = toc(wall_timer);
+info.wall_time_sec = wall_time;
 info.solution_assembly_count = 1;
 info.original_true_residual_evaluation_count = ...
-    numel(originalTrueResidualHistory);
+    numel(true_res_hist);
 info.timing = finalise_cycle_timing( ...
-    phaseTiming, numberOfCompletedIterations, solverElapsed, ...
-    diagnosticElapsed, wallElapsed, kernelTiming, kernelTimingByPhase);
+    phase_timing, niter_done, solver_time, ...
+    diagnostic_time, wall_time, kernel_timing, phase_kernels);
 
 end
 
-
-function timingByPhase = empty_phase_kernel_timing()
+function timing_by_phase = empty_phase_kernel_timing()
 %EMPTY_PHASE_KERNEL_TIMING Initialise caller-attributed leaf timings.
 
-timingByPhase.operator_application = empty_tucker_kernel_timing();
-timingByPhase.preconditioner_application = empty_tucker_kernel_timing();
-timingByPhase.outer_round = empty_tucker_kernel_timing();
-timingByPhase.orthogonalisation_subtraction_and_round = ...
+timing_by_phase.operator_application = empty_tucker_kernel_timing();
+timing_by_phase.preconditioner_application = empty_tucker_kernel_timing();
+timing_by_phase.outer_round = empty_tucker_kernel_timing();
+timing_by_phase.orthogonalisation_subtraction_and_round = ...
     empty_tucker_kernel_timing();
-timingByPhase.solution_assembly = empty_tucker_kernel_timing();
+timing_by_phase.solution_assembly = empty_tucker_kernel_timing();
 
 end
 
-
-function totalTiming = add_operation_kernel_timing(totalTiming, operationInfo)
+function total_timing = add_operation_kernel_timing(total_timing, op_info)
 %ADD_OPERATION_KERNEL_TIMING Add leaf timings returned by one operation.
 
-if isstruct(operationInfo) && isfield(operationInfo, 'kernel_timing')
-    totalTiming = add_tucker_kernel_timing( ...
-        totalTiming, operationInfo.kernel_timing);
+if isstruct(op_info) && isfield(op_info, 'kernel_timing')
+    total_timing = add_tucker_kernel_timing( ...
+        total_timing, op_info.kernel_timing);
 end
 
 end
-
 
 function timing = finalise_cycle_timing( ...
-    timing, completedIterations, solverElapsed, diagnosticElapsed, ...
-    wallElapsed, kernelTiming, kernelTimingByPhase)
+    timing, completed_iterations, solver_time, diagnostic_time, ...
+    wall_time, kernel_timing, phase_kernels)
 %FINALISE_CYCLE_TIMING Trim histories and close the timing accounts.
 
-historyFields = { ...
+history_fields = { ...
     'operator_application_history_sec', ...
     'preconditioner_application_history_sec', ...
     'outer_round_history_sec', ...
@@ -747,9 +651,9 @@ historyFields = { ...
     'small_least_squares_history_sec', ...
     'basis_normalisation_history_sec'};
 
-for fieldIndex = 1:numel(historyFields)
-    fieldName = historyFields{fieldIndex};
-    timing.(fieldName) = timing.(fieldName)(1:completedIterations);
+for field_idx = 1:numel(history_fields)
+    field_name = history_fields{field_idx};
+    timing.(field_name) = timing.(field_name)(1:completed_iterations);
 end
 
 timing.accounted_arnoldi_iteration_history_sec = ...
@@ -772,69 +676,68 @@ timing.accounted_solver_time_sec = ...
     timing.basis_normalisation_time_sec + ...
     timing.solution_assembly_time_sec;
 timing.unclassified_solver_time_sec = ...
-    solverElapsed - timing.accounted_solver_time_sec;
+    solver_time - timing.accounted_solver_time_sec;
 
 timing.accounted_diagnostic_time_sec = ...
     timing.original_true_residual_time_sec + ...
     timing.preconditioned_residual_diagnostic_time_sec;
 timing.unclassified_diagnostic_time_sec = ...
-    diagnosticElapsed - timing.accounted_diagnostic_time_sec;
+    diagnostic_time - timing.accounted_diagnostic_time_sec;
 
-timing.solver_time_sec = solverElapsed;
-timing.diagnostic_time_sec = diagnosticElapsed;
-timing.wall_time_sec = wallElapsed;
-timing.kernel = kernelTiming;
-timing.kernel_by_phase = kernelTimingByPhase;
+timing.solver_time_sec = solver_time;
+timing.diagnostic_time_sec = diagnostic_time;
+timing.wall_time_sec = wall_time;
+timing.kernel = kernel_timing;
+timing.kernel_by_phase = phase_kernels;
 
 end
 
-
-function [rankCapActive, maximumLocalError] = summarise_operation_info(varargin)
+function [cap_active, maximum_local_error] = summarise_operation_info(varargin)
 %SUMMARISE_OPERATION_INFO Combine diagnostics from nested operations.
 
-rankCapActive = false;
-maximumLocalError = 0;
+cap_active = false;
+maximum_local_error = 0;
 
-for argumentIndex = 1:nargin
+for argument_index = 1:nargin
 
-    operationInfo = varargin{argumentIndex};
+    op_info = varargin{argument_index};
 
-    if isempty(operationInfo)
+    if isempty(op_info)
         continue
     end
 
-    if isfield(operationInfo, 'rank_cap_active')
-        rankCapActive = rankCapActive || operationInfo.rank_cap_active;
+    if isfield(op_info, 'rank_cap_active')
+        cap_active = cap_active || op_info.rank_cap_active;
     end
 
-    scalarFields = { ...
+    scalar_fields = { ...
         'relative_error_estimate', ...
         'maximum_local_recompression_error', ...
         'final_relative_error_estimate'};
 
-    for fieldIndex = 1:numel(scalarFields)
+    for field_idx = 1:numel(scalar_fields)
 
-        fieldName = scalarFields{fieldIndex};
+        field_name = scalar_fields{field_idx};
 
-        if isfield(operationInfo, fieldName)
-            maximumLocalError = max( ...
-                maximumLocalError, max(operationInfo.(fieldName), [], 'all'));
+        if isfield(op_info, field_name)
+            maximum_local_error = max( ...
+                maximum_local_error, max(op_info.(field_name), [], 'all'));
         end
 
     end
 
-    vectorFields = { ...
+    vector_fields = { ...
         'addition_relative_error_estimate'};
 
-    for fieldIndex = 1:numel(vectorFields)
+    for field_idx = 1:numel(vector_fields)
 
-        fieldName = vectorFields{fieldIndex};
+        field_name = vector_fields{field_idx};
 
-        if isfield(operationInfo, fieldName) && ...
-                ~isempty(operationInfo.(fieldName))
-            maximumLocalError = max( ...
-                maximumLocalError, ...
-                max(operationInfo.(fieldName), [], 'all'));
+        if isfield(op_info, field_name) && ...
+                ~isempty(op_info.(field_name))
+            maximum_local_error = max( ...
+                maximum_local_error, ...
+                max(op_info.(field_name), [], 'all'));
         end
 
     end
@@ -843,44 +746,42 @@ end
 
 end
 
-
-function numberOfEntries = tucker_entries_from_rank_local(tensorDimensions, rankVector)
+function number_of_entries = tucker_entries_from_rank_local(n, ranks)
 %TUCKER_ENTRIES_FROM_RANK_LOCAL Count Tucker core and factor entries.
 
-numberOfEntries = prod(rankVector) + ...
-    sum(tensorDimensions .* rankVector);
+number_of_entries = prod(ranks) + ...
+    sum(n .* ranks);
 
 end
 
-
 function info = empty_cycle_info( ...
-    toleranceMode, maximumRanks, beta, originalResidual, ...
-    preconditionedResidual, solverTime, diagnosticTime, wallTime, ...
-    targetTolerance, fixedCompressionTolerance, ...
-    relaxationErrorBudget, maximumRelaxedTolerance)
+    tol_mode, max_ranks, beta, original_residual, ...
+    r_precond, solver_time, diagnostic_time, wall_time, ...
+    tol, fixed_tol, ...
+    relax_budget, max_relax_tol)
 %EMPTY_CYCLE_INFO Return consistent fields for an accurate initial guess.
 
 info.iterations = 0;
 info.converged = true;
 info.stop_reason = "initial_guess";
-info.tolerance_mode = toleranceMode;
-info.target_tolerance = targetTolerance;
-info.fixed_compression_tolerance = fixedCompressionTolerance;
-info.relaxation_error_budget = relaxationErrorBudget;
-info.maximum_relaxed_tolerance = maximumRelaxedTolerance;
-info.maximum_multilinear_rank = maximumRanks;
+info.tolerance_mode = tol_mode;
+info.target_tolerance = tol;
+info.fixed_compression_tolerance = fixed_tol;
+info.relaxation_error_budget = relax_budget;
+info.maximum_relaxed_tolerance = max_relax_tol;
+info.maximum_multilinear_rank = max_ranks;
 info.cycle_starting_preconditioned_residual_norm = beta;
-info.true_relative_residual = originalResidual;
+info.true_relative_residual = original_residual;
 info.true_residual_iteration = 0;
-info.true_preconditioned_relative_residual = preconditionedResidual;
+info.true_preconditioned_relative_residual = r_precond;
 info.true_preconditioned_residual_iteration = 0;
 info.computed_preconditioned_relative_residual = zeros(0, 1);
 info.preconditioned_residual_gap = zeros(0, 1);
 info.preconditioned_residual_gap_iteration = zeros(0, 1);
 info.eta = zeros(0, 1);
-info.solution_ranks = zeros(0, numel(maximumRanks));
+info.solution_ranks = zeros(0, numel(max_ranks));
 info.solution_rank_iteration = zeros(0, 1);
-info.basis_ranks = zeros(0, numel(maximumRanks));
+info.basis_ranks = zeros(0, numel(max_ranks));
 info.basis_storage_history_entries = zeros(0, 1);
 info.peak_basis_storage_entries = 0;
 info.H = [];
@@ -897,9 +798,9 @@ info.orthogonalisation_passes = 1;
 info.solver_time_history_sec = zeros(0, 1);
 info.diagnostic_time_history_sec = zeros(0, 1);
 info.wall_time_history_sec = zeros(0, 1);
-info.solver_time_sec = solverTime;
-info.diagnostic_time_sec = diagnosticTime;
-info.wall_time_sec = wallTime;
+info.solver_time_sec = solver_time;
+info.diagnostic_time_sec = diagnostic_time;
+info.wall_time_sec = wall_time;
 info.solution_assembly_count = 0;
 info.original_true_residual_evaluation_count = 1;
 

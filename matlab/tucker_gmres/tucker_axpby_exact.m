@@ -1,38 +1,5 @@
 function Z = tucker_axpby_exact(X, alpha, Y, beta)
 %TUCKER_AXPBY_EXACT Add two Tucker tensors without truncation.
-%
-% This function calculates
-%
-%     Z = alpha * X + beta * Y.
-%
-% It is similar to tucker_axpby_round, but it does not discard any small
-% singular directions. It is used when calculating a reliable true
-% residual. The intermediate Tucker ranks can therefore be larger.
-%
-% Inputs:
-%   X, Y
-%       Tensor Toolbox ttensor objects with the same dimensions.
-%
-%   alpha, beta
-%       Scalar coefficients.
-%
-% Output:
-%   Z
-%       An exact Tucker representation, up to floating-point roundoff.
-%
-% Thesis notation (Section 5.5):
-%   X, Y, Z                    <->  \mathcal X, \mathcal Y, \mathcal W
-%   alpha                      <->  \alpha
-%   beta                       <->  \gamma (the AXPBY coefficient)
-%   combinedCore               <->  \widehat{\mathcal G}
-%   combinedFactors{mode}      <->  \widehat U^(n)
-%   orthogonalFactors{mode}    <->  Q^(n)
-%   orthogonalCore             <->  \mathcal G_Q
-% Here beta is an AXPBY coefficient; it is not the GMRES quantity
-% \beta=||\widetilde r_0||.
-
-
-%% 1. Check the inputs
 
 if ~isa(X, 'ttensor') || ~isa(Y, 'ttensor')
     error('X and Y must both be Tensor Toolbox ttensor objects.');
@@ -46,61 +13,49 @@ if ~isscalar(alpha) || ~isscalar(beta)
     error('alpha and beta must be scalar numbers.');
 end
 
+d = ndims(X);
 
-%% 2. Read the ranks and prepare the larger block core
+rank_x = size(X.core);
+rank_y = size(Y.core);
+combined_core_size = rank_x + rank_y;
 
-numberOfModes = ndims(X);
+core_values = zeros(combined_core_size);
 
-rankX = size(X.core);
-rankY = size(Y.core);
-combinedCoreSize = rankX + rankY;
+index_x = cell(d, 1);
+index_y = cell(d, 1);
 
-combinedCoreValues = zeros(combinedCoreSize);
+for mode = 1:d
 
-indexX = cell(numberOfModes, 1);
-indexY = cell(numberOfModes, 1);
-
-for mode = 1:numberOfModes
-
-    indexX{mode} = 1:rankX(mode);
-    indexY{mode} = rankX(mode) + (1:rankY(mode));
+    index_x{mode} = 1:rank_x(mode);
+    index_y{mode} = rank_x(mode) + (1:rank_y(mode));
 
 end
 
-combinedCoreValues(indexX{:}) = alpha * double(X.core);
-combinedCoreValues(indexY{:}) = beta * double(Y.core);
+core_values(index_x{:}) = alpha * double(X.core);
+core_values(index_y{:}) = beta * double(Y.core);
 
-combinedCore = tensor(combinedCoreValues);
+combined_core = tensor(core_values);
 
+combined_factors = cell(d, 1);
 
-%% 3. Join the two sets of factor matrices
-
-combinedFactors = cell(numberOfModes, 1);
-
-for mode = 1:numberOfModes
-    combinedFactors{mode} = [X.u{mode}, Y.u{mode}];
+for mode = 1:d
+    combined_factors{mode} = [X.u{mode}, Y.u{mode}];
 end
 
+% Orthonormalise the joined factors
 
-%% 4. Orthonormalise the joined factors
+factors = cell(d, 1);
+core = combined_core;
 
-% QR avoids reconstructing the full N-by-N-by-... tensor. The R matrices
-% are absorbed into the core, so the represented tensor does not change.
-orthogonalFactors = cell(numberOfModes, 1);
-orthogonalCore = combinedCore;
+for mode = 1:d
 
-for mode = 1:numberOfModes
+    [Q, R] = qr(combined_factors{mode}, 0);
 
-    [Q, R] = qr(combinedFactors{mode}, 0);
-
-    orthogonalFactors{mode} = Q;
-    orthogonalCore = ttm(orthogonalCore, R, mode);
+    factors{mode} = Q;
+    core = ttm(core, R, mode);
 
 end
 
-
-%% 5. Return the exact sum
-
-Z = ttensor(orthogonalCore, orthogonalFactors);
+Z = ttensor(core, factors);
 
 end

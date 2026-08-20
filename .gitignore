@@ -2,20 +2,17 @@
 *.asv
 *.m~
 *.autosave
+# Runtime logs are ignored. Markdown experiment records under
+# docs/planning/experiment_logs remain versioned.
 *.log
 *.tmp
 
-# Local toolbox state
 tensor_toolbox/
 external/
 slprj/
 codegen/
 
-# Large or regenerated experiment files
-experiments/raw/
-experiments/checkpoints/
-experiments/figures/*.fig
+/experiments/
 
-# Editor state
 .vscode/
 .idea/

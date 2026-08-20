@@ -1,49 +1,41 @@
 function sketch = create_tucker_row_khatri_rao_sketch( ...
-    tensorDimensions, sketchSize, randomSeed)
+    n, sketch_size, seed)
 %CREATE_TUCKER_ROW_KHATRI_RAO_SKETCH Draw the residual sketch in Section 5.6.
-%
-% Row a of the implicit full matrix is
-%
-%   S_d(a,:) kron ... kron S_1(a,:).
-%
-% The full matrix is never formed. Each factor entry has variance
-% sketchSize^(-1/d), so each entry of the implicit full row has variance
-% 1/sketchSize.
 
-tensorDimensions = double(tensorDimensions(:).');
-numberOfModes = numel(tensorDimensions);
+n = double(n(:).');
+d = numel(n);
 
-if numberOfModes < 2 || any(tensorDimensions < 1) || ...
-        any(tensorDimensions ~= floor(tensorDimensions))
-    error('tensorDimensions must contain at least two positive integers.');
+if d < 2 || any(n < 1) || ...
+        any(n ~= floor(n))
+    error('n must contain at least two positive integers.');
 end
 
-if ~isscalar(sketchSize) || sketchSize < 1 || ...
-        sketchSize ~= floor(sketchSize)
-    error('sketchSize must be a positive integer.');
+if ~isscalar(sketch_size) || sketch_size < 1 || ...
+        sketch_size ~= floor(sketch_size)
+    error('sketch_size must be a positive integer.');
 end
 
-if ~isscalar(randomSeed) || ~isfinite(randomSeed) || ...
-        randomSeed < 0 || randomSeed ~= floor(randomSeed)
-    error('randomSeed must be a nonnegative integer.');
+if ~isscalar(seed) || ~isfinite(seed) || ...
+        seed < 0 || seed ~= floor(seed)
+    error('seed must be a nonnegative integer.');
 end
 
-stream = RandStream('mt19937ar', 'Seed', randomSeed);
-entryStandardDeviation = sketchSize^(-1 / (2 * numberOfModes));
-factors = cell(numberOfModes, 1);
+stream = RandStream('mt19937ar', 'Seed', seed);
+entry_standard_deviation = sketch_size^(-1 / (2 * d));
+factors = cell(d, 1);
 
-for mode = 1:numberOfModes
-    factors{mode} = entryStandardDeviation * ...
-        randn(stream, sketchSize, tensorDimensions(mode));
+for mode = 1:d
+    factors{mode} = entry_standard_deviation * ...
+        randn(stream, sketch_size, n(mode));
 end
 
 sketch.type = "row_khatri_rao";
-sketch.tensor_dimensions = tensorDimensions;
-sketch.number_of_modes = numberOfModes;
-sketch.sketch_size = sketchSize;
-sketch.random_seed = randomSeed;
-sketch.factor_entry_variance = sketchSize^(-1 / numberOfModes);
+sketch.tensor_dimensions = n;
+sketch.number_of_modes = d;
+sketch.sketch_size = sketch_size;
+sketch.random_seed = seed;
+sketch.factor_entry_variance = sketch_size^(-1 / d);
 sketch.factors = factors;
-sketch.storage_entries = sketchSize * sum(tensorDimensions);
+sketch.storage_entries = sketch_size * sum(n);
 
 end

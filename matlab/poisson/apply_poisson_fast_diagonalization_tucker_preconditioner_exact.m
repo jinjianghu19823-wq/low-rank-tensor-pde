@@ -2,13 +2,8 @@ function [Z, info] = ...
     apply_poisson_fast_diagonalization_tucker_preconditioner_exact( ...
     Y, preconditioner)
 %APPLY_POISSON_FAST_DIAGONALIZATION_TUCKER_PRECONDITIONER_EXACT Apply P.
-%
-% This fixed linear version performs the sine transforms and the exact
-% Tucker Hadamard product without recompression. It is intended for forming
-% the columns of the sketched residual problem. Any later rounding is the
-% responsibility of the calling Krylov method.
 
-callTimer = tic;
+call_timer = tic;
 
 if ~isa(Y, 'ttensor')
     error('Y must be a Tensor Toolbox ttensor object.');
@@ -22,39 +17,39 @@ if any(size(Y) ~= preconditioner.N)
     error('Every tensor mode must match the preconditioner size.');
 end
 
-forwardFactors = cell(3, 1);
-componentTimer = tic;
+forward_factors = cell(3, 1);
+component_timer = tic;
 
 for mode = 1:3
-    forwardFactors{mode} = dst(Y.u{mode});
+    forward_factors{mode} = dst(Y.u{mode});
 end
 
-forwardDstTime = toc(componentTimer);
-spectralY = ttensor(Y.core, forwardFactors);
+forward_dst_time = toc(component_timer);
+spectral_y = ttensor(Y.core, forward_factors);
 
-componentTimer = tic;
-exactSpectralProduct = tucker_hadamard_exact( ...
-    preconditioner.inverse_eigenvalue_tensor, spectralY);
-exactHadamardTime = toc(componentTimer);
+component_timer = tic;
+exact_spectral_product = tucker_hadamard_exact( ...
+    preconditioner.inverse_eigenvalue_tensor, spectral_y);
+exact_hadamard_time = toc(component_timer);
 
-inverseFactors = cell(3, 1);
-componentTimer = tic;
+inverse_factors = cell(3, 1);
+component_timer = tic;
 
 for mode = 1:3
-    inverseFactors{mode} = idst(exactSpectralProduct.u{mode});
+    inverse_factors{mode} = idst(exact_spectral_product.u{mode});
 end
 
-inverseDstTime = toc(componentTimer);
-Z = ttensor(exactSpectralProduct.core, inverseFactors);
+inverse_dst_time = toc(component_timer);
+Z = ttensor(exact_spectral_product.core, inverse_factors);
 
 info.input_ranks = size(Y.core);
 info.output_ranks = size(Z.core);
 info.rounding_performed = false;
 info.rank_cap_active = false;
 info.relative_error_estimate = 0;
-info.forward_dst_time_sec = forwardDstTime;
-info.exact_hadamard_time_sec = exactHadamardTime;
-info.inverse_dst_time_sec = inverseDstTime;
-info.call_time_sec = toc(callTimer);
+info.forward_dst_time_sec = forward_dst_time;
+info.exact_hadamard_time_sec = exact_hadamard_time;
+info.inverse_dst_time_sec = inverse_dst_time;
+info.call_time_sec = toc(call_timer);
 
 end
