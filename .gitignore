@@ -4,6 +4,15 @@
 *.autosave
 *.log
 *.tmp
+*.mat
+*.fig
+
+experiments/raw/*
+!experiments/raw/.gitkeep
+experiments/processed/*
+!experiments/processed/.gitkeep
+experiments/figures/*
+!experiments/figures/.gitkeep
 
 tensor_toolbox/
 external/

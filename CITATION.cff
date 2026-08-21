@@ -7,12 +7,13 @@ authors:
     given-names: "Jinjiang"
     affiliation: "University of Edinburgh"
 license: MIT
-version: 1.0.0
-date-released: 2026-08-19
+version: 1.1.0
+date-released: 2026-08-21
 repository-code: "https://github.com/jinjianghu19823-wq/low-rank-tensor-pde"
 abstract: >-
-  Core MATLAB implementations accompanying an MSc dissertation on Tucker
-  GMRES and sketched Tucker GMRES for tensor-structured PDE problems.
+  Complete MATLAB implementations accompanying an MSc dissertation on
+  low-rank matrix and Tucker approximation, GMRES, sketched GMRES, and
+  tensor-structured Poisson problems.
 keywords:
   - Tucker decomposition
   - GMRES
